@@ -4,8 +4,9 @@ name: Release (Linux AppImage)
 # Тегируйте коммит, где уже есть .github/workflows/release-linux.yml
 on:
   push:
+    # Один сегмент имени тега (v1.0.2 и т.д.); "**" в части проектов не триггерит workflow
     tags:
-      - "**"
+      - "*"
   workflow_dispatch:
     inputs:
       git_ref:
@@ -33,6 +34,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.git_ref || github.ref }}
+
+      - name: Событие (диагностика)
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref=${{ github.ref }} ref_name=${{ github.ref_name }}"
+          gh --version
 
       - uses: actions/setup-python@v5
         with:
@@ -94,6 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          gh auth status
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.git_ref }}"
           else
@@ -112,8 +120,16 @@ jobs:
             gh release upload "$TAG" "${assets[@]}" --clobber
           else
             echo "Создаём релиз $TAG"
-            gh release create "$TAG" "${assets[@]}" --generate-notes --title "$TAG"
+            gh release create "$TAG" "${assets[@]}" --verify-tag --generate-notes --title "$TAG"
           fi
+
+      - name: AppImage как артефакт (при пуше тега)
+        if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezka-native-${{ github.ref_name }}
+          path: dist/rezka-native-*.AppImage
+          if-no-files-found: error
 
       - name: Upload artifact (manual run)
         if: github.event_name == 'workflow_dispatch'
