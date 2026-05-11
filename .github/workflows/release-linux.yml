@@ -1,0 +1,124 @@
+name: Release (Linux AppImage)
+
+# Тег в git ≠ GitHub Release. Релиз создаётся только этим workflow.
+# Тегируйте коммит, где уже есть .github/workflows/release-linux.yml
+on:
+  push:
+    tags:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Ветка или тег для сборки (ручной запуск), напр. v1.0.1 или main"
+        required: true
+        default: "main"
+      version:
+        description: "Номер для имени AppImage (1.0.1). Оставьте 0.0.0 чтобы взять из тега"
+        required: true
+        default: "0.0.0"
+      publish_to_release:
+        description: "Создать/обновить GitHub Release и прикрепить AppImage (укажите существующий тег в git_ref)"
+        type: boolean
+        default: false
+
+# Settings → Actions → General → Workflow permissions → Read and write permissions
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.git_ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            librsvg2-bin libfuse2 file \
+            libegl1 libgl1-mesa-dri libgbm1 libdbus-1-3 \
+            libxkbcommon0 libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-shape0 \
+            libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 \
+            libfontconfig1 libfreetype6 libnss3 libnspr4 libasound2
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-linux-build.txt
+
+      - name: Set version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ver="${{ github.event.inputs.version }}"
+            if [ "$ver" = "0.0.0" ] || [ -z "$ver" ]; then
+              gref="${{ github.event.inputs.git_ref }}"
+              gref="${gref#refs/tags/}"
+              ver="${gref#v}"
+            fi
+            echo "v=${ver}" >> "$GITHUB_OUTPUT"
+          else
+            ref="${GITHUB_REF_NAME#v}"
+            echo "v=${ref}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: PyInstaller
+        run: pyinstaller rezka-native.spec
+
+      - name: AppImage
+        env:
+          REZKA_VERSION: ${{ steps.ver.outputs.v }}
+        run: |
+          chmod +x packaging/linux/build-appimage.sh
+          packaging/linux/build-appimage.sh
+
+      - name: List release artifacts
+        run: |
+          ls -la dist/
+          file dist/rezka-native || true
+          shopt -s nullglob && file dist/rezka-native-*.AppImage || true
+
+      - name: Create GitHub Release and upload AppImage
+        if: |
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_release == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.git_ref }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          TAG="${TAG#refs/heads/}"
+          shopt -s nullglob
+          assets=( dist/rezka-native-*.AppImage )
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "ERROR: нет dist/rezka-native-*.AppImage"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Релиз $TAG уже есть — докидываем файлы"
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            echo "Создаём релиз $TAG"
+            gh release create "$TAG" "${assets[@]}" --generate-notes --title "$TAG"
+          fi
+
+      - name: Upload artifact (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezka-native-appimage
+          path: dist/rezka-native-*.AppImage
+          if-no-files-found: error

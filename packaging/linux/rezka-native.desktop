@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rezka Native
+Comment=Клиент Rezka (PySide6)
+Exec=rezka-native
+Icon=rezka-native
+Categories=AudioVideo;Video;Network;
+Terminal=false
+StartupNotify=true
