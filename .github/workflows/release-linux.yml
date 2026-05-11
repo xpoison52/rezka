@@ -77,6 +77,9 @@ jobs:
             echo "v=${ref}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Записать версию в app-version.txt (для проверки обновлений в бандле)
+        run: printf '%s\n' "${{ steps.ver.outputs.v }}" > app-version.txt
+
       - name: PyInstaller
         run: pyinstaller rezka-native.spec
 

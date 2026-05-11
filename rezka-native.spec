@@ -11,6 +11,9 @@ block_cipher = None
 extra_datas = [
     (str(project_root / "main.qml"), "."),
 ]
+_av = project_root / "app-version.txt"
+if _av.exists():
+    extra_datas.append((str(_av), "."))
 
 pds_datas, pds_binaries, pds_hiddenimports = collect_all("PySide6")
 

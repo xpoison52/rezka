@@ -47,7 +47,7 @@ ApplicationWindow {
     property int modalEpisodeIndex: 0
     property bool watchSetupFlow: false
     property var qualityOptions: ["Auto", "360p", "480p", "720p", "1080p", "1080p Ultra"]
-    property var appUpdate: ({ status: "idle", message: "", commitsBehind: 0, localShort: "", remoteShort: "" })
+    property var appUpdate: ({ status: "idle", message: "", commitsBehind: 0, localShort: "", remoteShort: "", channel: "github" })
 
     component TvButton: Button {
         id: tvButton
@@ -739,8 +739,12 @@ ApplicationWindow {
                     visible: text.length > 0
                     text: {
                         let t = appUpdate.message || ""
-                        if (appUpdate.status === "behind" && appUpdate.localShort && appUpdate.remoteShort)
-                            t += "\nЛокально: " + appUpdate.localShort + " → сервер: " + appUpdate.remoteShort
+                        if (appUpdate.status === "behind" && appUpdate.localShort && appUpdate.remoteShort) {
+                            if (appUpdate.channel === "git")
+                                t += "\nЛокально: " + appUpdate.localShort + " → сервер: " + appUpdate.remoteShort
+                            else
+                                t += "\nУ вас: " + appUpdate.localShort + " · на GitHub: " + appUpdate.remoteShort
+                        }
                         return t
                     }
                 }
@@ -758,7 +762,7 @@ ApplicationWindow {
 
                     TvButton {
                         id: updateInstallBtn
-                        text: "Установить и перезапустить"
+                        text: appUpdate.channel === "git" ? "Установить и перезапустить" : "Открыть загрузку"
                         font.pixelSize: 18
                         Layout.fillWidth: true
                         KeyNavigation.right: updateLaterBtn

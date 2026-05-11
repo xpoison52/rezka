@@ -8,3 +8,4 @@ __pycache__/
 session.json
 progress.json
 last-launch.log
+app-version.txt

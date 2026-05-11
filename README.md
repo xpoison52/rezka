@@ -39,6 +39,8 @@ REZKA_VERSION=1.0.0 packaging/linux/build-appimage.sh
 
 Ручная проверка CI без тега: **Actions → Release (Linux AppImage) → Run workflow** — артефакт появится в summary.
 
+**Кнопка «Проверить обновления»** в приложении запрашивает [последний GitHub Release](https://docs.github.com/en/rest/releases/releases#get-the-latest-release) и сравнивает тег с локальной версией. В AppImage версия берётся из `app-version.txt` (его создаёт CI перед PyInstaller). Переменные окружения: `REZKA_GITHUB_REPO` (по умолчанию `xpoison52/rezka`; пустое значение отключает GitHub и при наличии `.git` используется старый режим по коммитам); `REZKA_UPDATES_VIA_GIT=1` — всегда проверка и установка через `git pull`; `REZKA_APP_VERSION` — принудительно задать свою версию для сравнения.
+
 ## Linux: Flatpak (локальная сборка)
 
 Из корня репозитория (при необходимости смените `app-id` в манифесте):
