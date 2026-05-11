@@ -1,0 +1,10 @@
+.venv/
+.build-venv/
+build/
+dist/
+*.AppImage
+__pycache__/
+*.pyc
+session.json
+progress.json
+last-launch.log
