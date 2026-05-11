@@ -28,33 +28,29 @@ LINUXDEPLOY="$WORKDIR/linuxdeploy-x86_64.AppImage"
 wget -q -O "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
 chmod +x "$LINUXDEPLOY"
 
-mkdir -p "$ROOT/dist"
+APPDIR="$WORKDIR/AppDir"
+mkdir -p "$APPDIR" "$ROOT/dist"
 VERSION="${REZKA_VERSION:-0.0.0}"
 export VERSION
 OUT="$ROOT/dist/rezka-native-${VERSION}-x86_64.AppImage"
 
+# linuxdeploy требует --appdir; сборку ведём из WORKDIR (там же появится *.AppImage)
+cd "$WORKDIR"
 "$LINUXDEPLOY" --appimage-extract-and-run \
+  --appdir "$APPDIR" \
   --executable "$BIN" \
   --desktop-file "$DESKTOP" \
   --icon-file "$ICON_PNG" \
-  --output appimage \
-  -v0
+  --output appimage
 
-# linuxdeploy обычно кладёт *.AppImage в cwd (ROOT); иногда в dist/
+# Не брать скачанный linuxdeploy-*.AppImage
 shopt -s nullglob
-mapfile -t imgs < <(
-  {
-    find "$ROOT" -maxdepth 1 -name "*.AppImage" -print
-    find "$ROOT/dist" -maxdepth 1 -name "*.AppImage" -print 2>/dev/null || true
-  } | sort -u
-)
+mapfile -t imgs < <(find "$WORKDIR" -maxdepth 1 -name "*.AppImage" ! -name "linuxdeploy*.AppImage" -print)
 if [[ ${#imgs[@]} -eq 0 ]]; then
   echo "AppImage не найден после linuxdeploy"
-  find "$ROOT" -maxdepth 3 -type f 2>/dev/null | head -80 || true
-  ls -la "$ROOT" "$ROOT/dist" 2>/dev/null || true
+  ls -la "$WORKDIR" "$APPDIR" 2>/dev/null || true
   exit 1
 fi
-# берём самый новый файл
 BUILT="$(ls -t "${imgs[@]}" | head -1)"
 mv -f "$BUILT" "$OUT"
 echo "Готово: $OUT"
