@@ -1909,11 +1909,15 @@ ApplicationWindow {
                                 watchButton.forceActiveFocus()
                                 event.accepted = true
                             }
-                        Layout.alignment: Qt.AlignRight
-                        onClicked: {
-                            seasonEpisodeModal.close()
-                            watchSetupFlow = false
-                            watchButton.forceActiveFocus()
+                        }
+                        TvButton {
+                            text: "Отмена"
+                            Layout.alignment: Qt.AlignRight
+                            onClicked: {
+                                seasonEpisodeModal.close()
+                                watchSetupFlow = false
+                                watchButton.forceActiveFocus()
+                            }
                         }
                     }
                 }
