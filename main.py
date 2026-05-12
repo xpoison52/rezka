@@ -1528,6 +1528,13 @@ def main() -> int:
             sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
             sc.activated.connect(slot)
 
+    try:
+        import huyauncher_input
+
+        huyauncher_input.install_if_enabled(app, roots, DATA_ROOT, APP_ROOT, launch_log)
+    except Exception as e:
+        launch_log(f"huyauncher_input: {e}\n{traceback.format_exc()}")
+
     launch_log("entering app.exec()")
     return app.exec()
 

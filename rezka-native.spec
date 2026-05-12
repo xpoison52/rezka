@@ -28,6 +28,7 @@ a = Analysis(
         "HdRezkaApi.types",
         "bs4",
         "requests",
+        "huyauncher_input",
     ],
     hookspath=[],
     hooksconfig={},
