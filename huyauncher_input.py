@@ -17,6 +17,7 @@ _JS_BUTTON = 0x01
 _JS_INIT = 0x80
 
 _ACTION_TO_QT: dict[str, int] = {}
+_TV_ACTION_KEYS = ("left", "right", "up", "down", "back", "confirm")
 
 
 def _init_qt_keys() -> None:
@@ -33,6 +34,33 @@ def _init_qt_keys() -> None:
         "confirm": int(Qt.Key.Key_Return),
         "back": int(Qt.Key.Key_Escape),
     }
+
+
+def _action_to_qt_with_tv_file(data_root: Path, log: Callable[[str], None]) -> dict[str, int]:
+    _init_qt_keys()
+    merged = dict(_ACTION_TO_QT)
+    p = data_root / "tv-hotkeys.json"
+    if not p.is_file():
+        return merged
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"huyauncher: tv-hotkeys.json не прочитан {p}: {e}")
+        return merged
+    if not isinstance(raw, dict):
+        return merged
+    for act in _TV_ACTION_KEYS:
+        v = raw.get(act)
+        if isinstance(v, bool) or v is None:
+            continue
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        if iv > 0:
+            merged[str(act)] = iv
+    log(f"huyauncher: Qt-коды из {p} (для js-моста)")
+    return merged
 
 
 def _candidate_hotkey_files(data_root: Path, app_root: Path) -> list[Path]:
@@ -54,7 +82,9 @@ def _candidate_hotkey_files(data_root: Path, app_root: Path) -> list[Path]:
     return out
 
 
-def _merge_button_to_qt(paths: list[Path], log: Callable[[str], None]) -> dict[int, int]:
+def _merge_button_to_qt(
+    paths: list[Path], action_to_qt: dict[str, int], log: Callable[[str], None]
+) -> dict[int, int]:
     _init_qt_keys()
     merged: dict[int, int] = {}
     for p in paths:
@@ -72,7 +102,8 @@ def _merge_button_to_qt(paths: list[Path], log: Callable[[str], None]) -> dict[i
             if not isinstance(spec, dict) or spec.get("kind") != "button":
                 continue
             act = str(action)
-            if act not in _ACTION_TO_QT:
+            qk = action_to_qt.get(act)
+            if qk is None:
                 continue
             try:
                 btn = int(spec.get("js_button", spec.get("index", -1)))
@@ -80,7 +111,7 @@ def _merge_button_to_qt(paths: list[Path], log: Callable[[str], None]) -> dict[i
                 continue
             if btn < 0:
                 continue
-            file_map[btn] = _ACTION_TO_QT[act]
+            file_map[btn] = int(qk)
         if file_map:
             log(f"huyauncher: привязки из {p} ({len(file_map)} кн.)")
         merged.update(file_map)
@@ -104,7 +135,9 @@ class HuyLauncherJoyBridge:
         self._qapp: QGuiApplication = qapp
         self._windows = [w for w in windows if isinstance(w, QQuickWindow)]
         self._paths = _candidate_hotkey_files(data_root, app_root)
-        self._btn_to_qt = _merge_button_to_qt(self._paths, log)
+        self._data_root = data_root
+        self._action_to_qt = _action_to_qt_with_tv_file(data_root, log)
+        self._btn_to_qt = _merge_button_to_qt(self._paths, self._action_to_qt, log)
         self._fd: int | None = None
         self._notifier: QObject | None = None
         self._reload_timer: QTimer | None = None
@@ -141,13 +174,19 @@ class HuyLauncherJoyBridge:
                 t = max(t, p.stat().st_mtime)
             except OSError:
                 pass
+        tv = self._data_root / "tv-hotkeys.json"
+        try:
+            t = max(t, tv.stat().st_mtime)
+        except OSError:
+            pass
         return t
 
     def _maybe_reload(self) -> None:
         mt = self._max_mtime()
         if mt > self._mtime:
             self._mtime = mt
-            self._btn_to_qt = _merge_button_to_qt(self._paths, self._log)
+            self._action_to_qt = _action_to_qt_with_tv_file(self._data_root, self._log)
+            self._btn_to_qt = _merge_button_to_qt(self._paths, self._action_to_qt, self._log)
 
     def _open_first_js(self) -> int | None:
         devdir = Path("/dev/input")

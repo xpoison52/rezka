@@ -49,6 +49,17 @@ ApplicationWindow {
     property var qualityOptions: ["Auto", "360p", "480p", "720p", "1080p", "1080p Ultra"]
     property var appUpdate: ({ status: "idle", message: "", commitsBehind: 0, localShort: "", remoteShort: "", channel: "github" })
 
+    property int hkLeft: Qt.Key_Left
+    property int hkRight: Qt.Key_Right
+    property int hkUp: Qt.Key_Up
+    property int hkDown: Qt.Key_Down
+    property int hkBack: Qt.Key_Escape
+    property int hkConfirm: Qt.Key_Space
+    property bool tvHotkeysWizardVisible: false
+    property int tvWizardStepIndex: 0
+    property string tvHotkeysWizardError: ""
+    property var tvWizardPending: ({})
+
     component TvButton: Button {
         id: tvButton
         font.pixelSize: 20
@@ -468,6 +479,86 @@ ApplicationWindow {
         showPlayerControls()
     }
 
+    function isLinuxTvOkEvent(event) {
+        return event.key === Qt.Key_Yes || event.nativeScanCode === 352
+    }
+
+    function applyTvHotkeysFromJsonText(jsonText) {
+        var raw = (jsonText || "").trim()
+        if (!raw || raw === "{}") {
+            hkLeft = Qt.Key_Left
+            hkRight = Qt.Key_Right
+            hkUp = Qt.Key_Up
+            hkDown = Qt.Key_Down
+            hkBack = Qt.Key_Escape
+            hkConfirm = Qt.Key_Space
+            return
+        }
+        try {
+            var o = JSON.parse(raw)
+            hkLeft = o.left !== undefined ? o.left : Qt.Key_Left
+            hkRight = o.right !== undefined ? o.right : Qt.Key_Right
+            hkUp = o.up !== undefined ? o.up : Qt.Key_Up
+            hkDown = o.down !== undefined ? o.down : Qt.Key_Down
+            hkBack = o.back !== undefined ? o.back : Qt.Key_Escape
+            hkConfirm = o.confirm !== undefined ? o.confirm : Qt.Key_Space
+        } catch (e) {
+        }
+    }
+
+    function reloadTvHotkeysFromBackend() {
+        applyTvHotkeysFromJsonText(backend.readTvHotkeysJson())
+    }
+
+    function tvWizardKeyNames() {
+        return ["left", "right", "up", "down", "back", "confirm"]
+    }
+
+    function tvWizardStepTitleRu() {
+        var titles = ["Стрелка влево", "Стрелка вправо", "Стрелка вверх", "Стрелка вниз", "Назад (как Esc)", "ОК / Пауза (как Пробел)"]
+        return titles[tvWizardStepIndex] || ""
+    }
+
+    function tvWizardApplyKey(event) {
+        var k = event.key
+        if (k === Qt.Key_unknown || k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta || k === Qt.Key_AltGr)
+            return false
+        var names = tvWizardKeyNames()
+        if (tvWizardStepIndex < 0 || tvWizardStepIndex >= names.length)
+            return false
+        var n = names[tvWizardStepIndex]
+        var copy = Object.assign({}, tvWizardPending)
+        copy[n] = k
+        tvWizardPending = copy
+        event.accepted = true
+        tvHotkeysWizardError = ""
+        if (tvWizardStepIndex < names.length - 1) {
+            tvWizardStepIndex++
+        } else {
+            if (!backend.saveTvHotkeysJson(JSON.stringify(tvWizardPending))) {
+                tvHotkeysWizardError = "Все шесть клавиш должны быть разными. Начните сначала."
+                tvWizardStepIndex = 0
+                tvWizardPending = ({})
+            } else {
+                root.reloadTvHotkeysFromBackend()
+                tvHotkeysWizardVisible = false
+                tvWizardStepIndex = 0
+                tvWizardPending = ({})
+                Qt.callLater(function () {
+                    if (stack.currentIndex === 1)
+                        grid.forceActiveFocus()
+                    else if (stack.currentIndex === 0)
+                        email.forceActiveFocus()
+                    else if (stack.currentIndex === 2)
+                        watchButton.forceActiveFocus()
+                    else if (stack.currentIndex === 3)
+                        playerPage.forceActiveFocus()
+                })
+            }
+        }
+        return true
+    }
+
     function progressRatio() {
         if (mediaPlayer.duration <= 0)
             return 0
@@ -670,6 +761,10 @@ ApplicationWindow {
             if (s === "checking" || s === "behind" || s === "current" || s === "error" || s === "pulling" || s === "restarting")
                 appUpdatePopup.open()
         }
+
+        function onTvHotkeysChanged(json) {
+            root.reloadTvHotkeysFromBackend()
+        }
     }
 
     Popup {
@@ -798,7 +893,9 @@ ApplicationWindow {
             }
 
             Keys.onPressed: function (event) {
-                if (event.key === Qt.Key_Escape) {
+                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                    return
+                if (event.key === root.hkBack || event.key === Qt.Key_Escape) {
                     if (!(appUpdate.status === "pulling" || appUpdate.status === "restarting" || appUpdate.status === "checking")) {
                         event.accepted = true
                         appUpdatePopup.close()
@@ -1010,7 +1107,12 @@ ApplicationWindow {
                 }
             }
 
-            Keys.onEscapePressed: backend.quit()
+            Keys.onPressed: function (event) {
+                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                    return
+                if (event.key === root.hkBack)
+                    backend.quit()
+            }
         }
 
         Item {
@@ -1206,36 +1308,48 @@ ApplicationWindow {
                         }
                     }
 
-                    Keys.onReturnPressed: {
-                        if (currentIndex >= 0 && historyItems[currentIndex])
-                            openListItem(historyItems[currentIndex])
-                    }
-
-                    Keys.onEnterPressed: {
-                        if (currentIndex >= 0 && historyItems[currentIndex])
-                            openListItem(historyItems[currentIndex])
-                    }
-
-                    Keys.onSpacePressed: function (event) {
-                        if (currentIndex >= 0 && historyItems[currentIndex])
-                            openListItem(historyItems[currentIndex])
-                        event.accepted = true
-                    }
-
-                    Keys.onUpPressed: {
-                        if (currentIndex <= 0)
-                            continueTabButton.forceActiveFocus()
-                        else
-                            event.accepted = false
-                    }
-
-                    Keys.onEscapePressed: function (event) {
-                        if (!loggedIn) {
-                            stack.currentIndex = 0
-                            email.forceActiveFocus()
-                        } else {
-                            event.accepted = true
-                            continueTabButton.forceActiveFocus()
+                    Keys.onPressed: function (event) {
+                        if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                            return
+                        if (root.isLinuxTvOkEvent(event)) {
+                            if (currentIndex >= 0 && historyItems[currentIndex]) {
+                                openListItem(historyItems[currentIndex])
+                                event.accepted = true
+                            }
+                            return
+                        }
+                        if (event.key === root.hkConfirm || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            if (currentIndex >= 0 && historyItems[currentIndex]) {
+                                openListItem(historyItems[currentIndex])
+                                event.accepted = true
+                            }
+                            return
+                        }
+                        if (event.key === root.hkUp) {
+                            if (currentIndex <= 0) {
+                                continueTabButton.forceActiveFocus()
+                                event.accepted = true
+                            } else {
+                                grid.currentIndex = grid.currentIndex - 1
+                                event.accepted = true
+                            }
+                            return
+                        }
+                        if (event.key === root.hkDown) {
+                            if (currentIndex < grid.count - 1) {
+                                grid.currentIndex = grid.currentIndex + 1
+                                event.accepted = true
+                            }
+                            return
+                        }
+                        if (event.key === root.hkBack) {
+                            if (!loggedIn) {
+                                stack.currentIndex = 0
+                                email.forceActiveFocus()
+                            } else {
+                                event.accepted = true
+                                continueTabButton.forceActiveFocus()
+                            }
                         }
                     }
                 }
@@ -1468,7 +1582,12 @@ ApplicationWindow {
                 }
             }
 
-            Keys.onEscapePressed: {
+            Keys.onPressed: function (event) {
+                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                    return
+                if (event.key !== root.hkBack)
+                    return
+                event.accepted = true
                 stack.currentIndex = 1
                 grid.forceActiveFocus()
             }
@@ -1551,10 +1670,15 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Keys.onEscapePressed: {
+                        Keys.onPressed: function (event) {
+                            if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                return
+                            if (event.key !== root.hkBack)
+                                return
                             translatorModal.close()
                             watchSetupFlow = false
                             watchButton.forceActiveFocus()
+                            event.accepted = true
                         }
                     }
                 }
@@ -1634,10 +1758,15 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Keys.onEscapePressed: {
+                        Keys.onPressed: function (event) {
+                            if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                return
+                            if (event.key !== root.hkBack)
+                                return
                             qualityModal.close()
                             watchSetupFlow = false
                             watchButton.forceActiveFocus()
+                            event.accepted = true
                         }
                     }
                 }
@@ -1713,6 +1842,16 @@ ApplicationWindow {
                                     modalEpisodesList.forceActiveFocus()
                                 }
                             }
+                            Keys.onPressed: function (event) {
+                                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                    return
+                                if (event.key !== root.hkBack)
+                                    return
+                                seasonEpisodeModal.close()
+                                watchSetupFlow = false
+                                watchButton.forceActiveFocus()
+                                event.accepted = true
+                            }
                         }
                         ListView {
                             id: modalEpisodesList
@@ -1760,10 +1899,16 @@ ApplicationWindow {
                                 }
                             }
                             Keys.onLeftPressed: modalSeasonsList.forceActiveFocus()
-                        }
-                    }
-                    TvButton {
-                        text: "Отмена"
+                            Keys.onPressed: function (event) {
+                                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                    return
+                                if (event.key !== root.hkBack)
+                                    return
+                                seasonEpisodeModal.close()
+                                watchSetupFlow = false
+                                watchButton.forceActiveFocus()
+                                event.accepted = true
+                            }
                         Layout.alignment: Qt.AlignRight
                         onClicked: {
                             seasonEpisodeModal.close()
@@ -2273,9 +2418,14 @@ ApplicationWindow {
                                     playerQualityButton.forceActiveFocus()
                                 }
                             }
-                            Keys.onEscapePressed: {
+                            Keys.onPressed: function (event) {
+                                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                    return
+                                if (event.key !== root.hkBack)
+                                    return
                                 playerQualityModal.close()
                                 playerQualityButton.forceActiveFocus()
+                                event.accepted = true
                             }
                         }
                     }
@@ -2344,9 +2494,14 @@ ApplicationWindow {
                                     showPlayerControls()
                                 }
                             }
-                            Keys.onEscapePressed: {
+                            Keys.onPressed: function (event) {
+                                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                                    return
+                                if (event.key !== root.hkBack)
+                                    return
                                 playerSubtitleModal.close()
                                 subtitleSelectButton.forceActiveFocus()
+                                event.accepted = true
                             }
                         }
                     }
@@ -2393,15 +2548,11 @@ ApplicationWindow {
             function _isConfirmKey(event) {
                 if (_isLinuxTvOk(event))
                     return true
-                switch (event.key) {
-                case Qt.Key_Space:
-                case Qt.Key_Return:
-                case Qt.Key_Enter:
-                case Qt.Key_Select:
+                if (event.key === root.hkConfirm)
                     return true
-                default:
-                    return false
-                }
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Select)
+                    return true
+                return false
             }
 
             function _tryClickFocusedForTvOk(event) {
@@ -2417,6 +2568,9 @@ ApplicationWindow {
 
             // Enter/OK/пробел: пауза только когда фокус не на кнопках панели и не в модалках (иначе перехват ломал активацию).
             Keys.onPressed: function (event) {
+                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                    return
+
                 if (_tryClickFocusedForTvOk(event))
                     return
 
@@ -2442,6 +2596,35 @@ ApplicationWindow {
                     break
                 }
 
+                if (event.key === root.hkLeft) {
+                    seekBy(-15000)
+                    event.accepted = true
+                    return
+                }
+                if (event.key === root.hkRight) {
+                    seekBy(15000)
+                    event.accepted = true
+                    return
+                }
+                if (event.key === root.hkUp) {
+                    showPlayerControls()
+                    playButton.forceActiveFocus()
+                    event.accepted = true
+                    return
+                }
+                if (event.key === root.hkDown) {
+                    showPlayerControls()
+                    event.accepted = true
+                    return
+                }
+                if (event.key === root.hkBack || event.key === Qt.Key_Back) {
+                    mediaPlayer.stop()
+                    stack.currentIndex = 2
+                    watchButton.forceActiveFocus()
+                    event.accepted = true
+                    return
+                }
+
                 if (!_isConfirmKey(event))
                     return
 
@@ -2451,29 +2634,81 @@ ApplicationWindow {
                 event.accepted = true
                 togglePlayPauseFromRemote()
             }
+        }
+    }
 
-            Keys.onUpPressed: {
-                showPlayerControls()
-                playButton.forceActiveFocus()
+    Item {
+        id: tvHotkeysWizardOverlay
+        z: 200000
+        anchors.fill: parent
+        visible: tvHotkeysWizardVisible
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#f0111111"
+        }
+
+        FocusScope {
+            id: tvHotkeysWizardFocus
+            anchors.fill: parent
+            focus: tvHotkeysWizardVisible
+
+            Keys.onPressed: function (event) {
+                if (tvHotkeysWizardVisible)
+                    tvWizardApplyKey(event)
             }
 
-            Keys.onDownPressed: showPlayerControls()
-            Keys.onLeftPressed: seekBy(-15000)
-            Keys.onRightPressed: seekBy(15000)
+            Column {
+                anchors.centerIn: parent
+                spacing: 22
+                width: Math.min(680, parent.parent.width - 80)
 
-            Keys.onBackPressed: {
-                mediaPlayer.stop()
-                stack.currentIndex = 2
-                watchButton.forceActiveFocus()
-            }
+                Text {
+                    text: "Настройка пульта"
+                    color: "white"
+                    font.pixelSize: 32
+                    font.bold: true
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                }
 
-            Keys.onEscapePressed: {
-                mediaPlayer.stop()
-                stack.currentIndex = 2
-                watchButton.forceActiveFocus()
+                Text {
+                    text: "Шаг " + (tvWizardStepIndex + 1) + " из 6 — нажмите клавишу:\n«" + tvWizardStepTitleRu() + "»"
+                    color: "#dddddd"
+                    font.pixelSize: 22
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                    visible: tvHotkeysWizardError.length > 0
+                    text: tvHotkeysWizardError
+                    color: "#ff8888"
+                    font.pixelSize: 18
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
             }
         }
 
-        Component.onCompleted: backend.restoreSession()
+        onVisibleChanged: {
+            if (visible) {
+                tvWizardStepIndex = 0
+                tvWizardPending = ({})
+                tvHotkeysWizardError = ""
+                Qt.callLater(function () {
+                    tvHotkeysWizardFocus.forceActiveFocus()
+                })
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        reloadTvHotkeysFromBackend()
+        if (!backend.tvHotkeysConfigured())
+            tvHotkeysWizardVisible = true
+        backend.restoreSession()
     }
 }

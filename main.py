@@ -111,6 +111,54 @@ launch_log(f"APP_ROOT={APP_ROOT} DATA_ROOT={DATA_ROOT} cwd={os.getcwd()}")
 HISTORY_FILE = DATA_ROOT / "history.json"
 SESSION_FILE = DATA_ROOT / "session.json"
 PROGRESS_FILE = DATA_ROOT / "progress.json"
+TV_HOTKEYS_FILE = DATA_ROOT / "tv-hotkeys.json"
+
+_TV_HOTKEY_FIELDS = ("left", "right", "up", "down", "back", "confirm")
+
+
+def _default_tv_hotkeys_ints() -> dict[str, int]:
+    return {
+        "left": int(Qt.Key.Key_Left),
+        "right": int(Qt.Key.Key_Right),
+        "up": int(Qt.Key.Key_Up),
+        "down": int(Qt.Key.Key_Down),
+        "back": int(Qt.Key.Key_Escape),
+        "confirm": int(Qt.Key.Key_Space),
+    }
+
+
+def _parse_tv_hotkeys_obj(raw: object) -> dict[str, int] | None:
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, int] = {}
+    for k in _TV_HOTKEY_FIELDS:
+        v = raw.get(k)
+        if not isinstance(v, int):
+            try:
+                v = int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+        if v <= 0:
+            return None
+        out[str(k)] = int(v)
+    if len(set(out.values())) != len(out):
+        return None
+    return out
+
+
+def _load_tv_hotkeys_from_disk() -> dict[str, int] | None:
+    if not TV_HOTKEYS_FILE.is_file():
+        return None
+    try:
+        raw = json.loads(TV_HOTKEYS_FILE.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _parse_tv_hotkeys_obj(raw)
+
+
+def _tv_hotkeys_configured() -> bool:
+    return _load_tv_hotkeys_from_disk() is not None
+
 
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
@@ -543,6 +591,7 @@ class Backend(QObject):
     errorChanged = Signal(str)
     loadingChanged = Signal(str)
     appUpdateChanged = Signal(str)
+    tvHotkeysChanged = Signal(str)
     restartRequested = Signal()
     openReleaseUrl = Signal(str)
 
@@ -1409,6 +1458,45 @@ class Backend(QObject):
             self._cec_command(b"mute\n")
 
         self.run_async(work)
+
+    @Slot(result=bool)
+    def tvHotkeysConfigured(self) -> bool:
+        return _tv_hotkeys_configured()
+
+    @Slot(result=str)
+    def readTvHotkeysJson(self) -> str:
+        loaded = _load_tv_hotkeys_from_disk()
+        data = loaded if loaded is not None else _default_tv_hotkeys_ints()
+        return json.dumps(data, ensure_ascii=False)
+
+    @Slot(str, result=bool)
+    def saveTvHotkeysJson(self, payload: str) -> bool:
+        try:
+            raw = json.loads(payload or "{}")
+        except json.JSONDecodeError:
+            return False
+        parsed = _parse_tv_hotkeys_obj(raw)
+        if not parsed:
+            return False
+        try:
+            TV_HOTKEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            TV_HOTKEYS_FILE.write_text(
+                json.dumps(parsed, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            return False
+        self.tvHotkeysChanged.emit(json.dumps(parsed, ensure_ascii=False))
+        return True
+
+    @Slot()
+    def clearTvHotkeys(self) -> None:
+        try:
+            if TV_HOTKEYS_FILE.is_file():
+                TV_HOTKEYS_FILE.unlink()
+        except OSError:
+            pass
+        self.tvHotkeysChanged.emit("{}")
 
     @Slot(QObject)
     def configureMediaPlayer(self, media_player):
