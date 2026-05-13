@@ -502,6 +502,10 @@ ApplicationWindow {
     function isTvActivateButton(event) {
         if (!event)
             return false
+        // B на геймпаде часто приходит как Key_Return; если «назад» привязан к тому же коду,
+        // не считать это ОК (иначе в сетке сначала срабатывает открытие, а не hkBack).
+        if (event.key === root.hkBack || event.key === Qt.Key_Escape)
+            return false
         if (isLinuxTvOkEvent(event))
             return true
         if (event.key === hkConfirm)
