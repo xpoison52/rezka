@@ -1,6 +1,8 @@
 beautifulsoup4==4.14.3
 HdRezkaApi==11.2.3
 Pillow==11.3.0
-PySide6==6.11.0
+# Qt на PyPI не выкладывает Linux aarch64 для 6.11.x; для AppImage на Pi / GH arm runner — 6.8.0.2.
+PySide6==6.8.0.2; platform_machine == "aarch64" and sys_platform == "linux"
+PySide6==6.11.0; platform_machine != "aarch64" or sys_platform != "linux"
 qrcode==8.2
 requests==2.33.1
