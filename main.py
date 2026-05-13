@@ -1,14 +1,22 @@
+import base64
+import html
 import json
 import os
 import re
+import secrets
+import socket
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 
 def _is_frozen() -> bool:
@@ -161,6 +169,302 @@ def _tv_hotkeys_configured() -> bool:
 
 
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+
+
+def _lan_ipv4() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.4)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        try:
+            host = socket.gethostname()
+            return socket.gethostbyname(host)
+        except OSError:
+            return "127.0.0.1"
+
+
+_COMPANION_STYLE = """
+:root {
+  --bg0: #0a0c10;
+  --bg1: #12151d;
+  --card: rgba(22, 26, 34, 0.94);
+  --stroke: rgba(120, 170, 240, 0.14);
+  --text: #eef1f6;
+  --muted: #8b95a8;
+  --accent: #5b8fd4;
+  --accent-hi: #8ec7ff;
+  --field: #0d1018;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: radial-gradient(120% 80% at 50% -20%, rgba(70, 120, 200, 0.12), transparent 55%),
+    linear-gradient(165deg, var(--bg0) 0%, var(--bg1) 42%, #060709 100%);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: max(20px, env(safe-area-inset-top, 0px))
+    max(20px, env(safe-area-inset-right, 0px))
+    max(24px, env(safe-area-inset-bottom, 0px))
+    max(20px, env(safe-area-inset-left, 0px));
+}
+.wrap { width: 100%; max-width: 380px; }
+.card {
+  background: var(--card);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--stroke);
+  border-radius: 20px;
+  padding: 32px 28px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45);
+}
+.brand {
+  font-size: 0.69rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 26px;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+label:first-of-type { margin-top: 0; }
+input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--field);
+  color: var(--text);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input::placeholder { color: rgba(139, 149, 168, 0.55); }
+input:focus {
+  border-color: rgba(142, 199, 255, 0.35);
+  box-shadow: 0 0 0 3px rgba(91, 143, 212, 0.18);
+}
+button[type="submit"] {
+  margin-top: 26px;
+  width: 100%;
+  padding: 15px 18px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+  color: #0a0c10;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  box-shadow: 0 6px 24px rgba(91, 143, 212, 0.22);
+}
+button[type="submit"]:active { transform: scale(0.988); }
+form { margin: 0; }
+.idx {
+  text-align: center;
+  padding: 48px 24px;
+}
+.idx .brand { margin-bottom: 12px; }
+.idx h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+.idx--solo { padding: 56px 24px; }
+.idx-mark {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--text);
+}
+.h1-ok {
+  margin: 0;
+  text-align: center;
+  font-size: 1.45rem;
+  font-weight: 600;
+  color: var(--accent-hi);
+  letter-spacing: -0.02em;
+}
+.msg {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+}
+"""
+
+
+def _companion_html(title: str, body_inner: str, *, card: bool = True) -> str:
+    inner = f'<div class="card">{body_inner}</div>' if card else body_inner
+    return (
+        "<!DOCTYPE html>\n<html lang=\"ru\">\n<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">\n'
+        '<meta name="color-scheme" content="dark">\n'
+        '<meta name="theme-color" content="#0a0c10">\n'
+        f"<title>{html.escape(title)}</title>\n<style>\n{_COMPANION_STYLE}\n</style>\n"
+        f"</head>\n<body><div class=\"wrap\">{inner}</div></body>\n</html>"
+    )
+
+
+_COMPANION_INDEX_HTML = _companion_html(
+    "Rezka",
+    '<div class="idx idx--solo"><span class="idx-mark">Rezka</span></div>',
+    card=False,
+)
+
+_COMPANION_LOGIN_HTML = _companion_html(
+    "Вход",
+    """<div class="brand">Rezka</div>
+<h1>Вход</h1>
+<form method="post" action="/login" autocomplete="on">
+<input type="hidden" name="token" value="__TOKEN__">
+<label for="e">Email</label>
+<input id="e" name="email" type="email" autocomplete="username" inputmode="email" required>
+<label for="p">Пароль</label>
+<input id="p" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Войти</button>
+</form>""",
+)
+
+_COMPANION_SEARCH_HTML = _companion_html(
+    "Поиск",
+    """<div class="brand">Rezka</div>
+<h1>Поиск</h1>
+<form method="post" action="/search" autocomplete="off">
+<input type="hidden" name="token" value="__TOKEN__">
+<label for="q">Запрос</label>
+<input id="q" name="q" type="search" enterkeyhint="search" required placeholder="Фильм или сериал">
+<button type="submit">Найти</button>
+</form>""",
+)
+
+
+def _companion_msg_page(title: str, message: str, *, ok: bool = False) -> str:
+    if ok:
+        inner = f'<div class="brand">Rezka</div><h1 class="h1-ok">{html.escape(message)}</h1>'
+        return _companion_html(title, inner)
+    inner = (
+        '<div class="brand">Rezka</div>'
+        f"<h1>{html.escape(title)}</h1>"
+        f'<p class="msg">{html.escape(message)}</p>'
+    )
+    return _companion_html(title, inner)
+
+
+def _companion_qr_data_url(url: str, *, box_size: int = 4, border: int = 1) -> str:
+    if not url:
+        return ""
+    try:
+        import qrcode
+
+        buf = BytesIO()
+        qr = qrcode.QRCode(version=None, box_size=box_size, border=border)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.standard_b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        launch_log(f"companion QR: {e}")
+        return ""
+
+
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+class _CompanionHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt: str, *args) -> None:
+        launch_log(f"companion HTTP {fmt % args}")
+
+    def _send(self, code: int, body: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        raw_path = urlparse(self.path).path or "/"
+        path = raw_path.rstrip("/") or "/"
+        token = html.escape(getattr(self.server, "_rezka_token", "") or "", quote=True)
+        if path in ("/", ""):
+            self._send(200, _COMPANION_INDEX_HTML)
+            return
+        if path == "/login":
+            page = _COMPANION_LOGIN_HTML.replace("__TOKEN__", token)
+            self._send(200, page)
+            return
+        if path == "/search":
+            page = _COMPANION_SEARCH_HTML.replace("__TOKEN__", token)
+            self._send(200, page)
+            return
+        self._send(404, _companion_msg_page("Ошибка", "Страница не найдена"))
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path or ""
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > 65536:
+            self._send(400, _companion_msg_page("Ошибка", "Некорректный запрос"))
+            return
+        raw = self.rfile.read(length)
+        fields = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+        expect = getattr(self.server, "_rezka_token", "") or ""
+        if (fields.get("token") or [""])[0] != expect:
+            self._send(403, _companion_msg_page("Ошибка", "Сессия устарела"))
+            return
+        backend = getattr(self.server, "_rezka_backend", None)
+        if backend is None:
+            self._send(500, _companion_msg_page("Ошибка", "Сервис недоступен"))
+            return
+        if path == "/login":
+            email = (fields.get("email") or [""])[0].strip()
+            password = (fields.get("password") or [""])[0]
+            if not email or not password:
+                self._send(400, _companion_msg_page("Вход", "Заполните email и пароль"))
+                return
+            backend._companion_login_requested.emit(email, password)
+            self._send(200, _companion_msg_page("Вход", "Готово", ok=True))
+            return
+        if path == "/search":
+            q = (fields.get("q") or [""])[0].strip()
+            if not q:
+                self._send(400, _companion_msg_page("Поиск", "Введите запрос"))
+                return
+            backend._companion_search_requested.emit(q)
+            self._send(200, _companion_msg_page("Поиск", "Готово", ok=True))
+            return
+        self._send(404, _companion_msg_page("Ошибка", "Страница не найдена"))
 
 
 def safe_json(value):
@@ -594,6 +898,14 @@ class Backend(QObject):
     tvHotkeysChanged = Signal(str)
     restartRequested = Signal()
     openReleaseUrl = Signal(str)
+    companionServerUrlChanged = Signal(str)
+    companionLoginUrlChanged = Signal(str)
+    companionSearchUrlChanged = Signal(str)
+    companionLoginQrChanged = Signal(str)
+    companionSearchQrChanged = Signal(str)
+    companionSearchApplied = Signal(str)
+    _companion_login_requested = Signal(str, str)
+    _companion_search_requested = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -607,7 +919,16 @@ class Backend(QObject):
         self._update_branch = (os.environ.get("REZKA_GIT_BRANCH") or "").strip()
         self._update_download_url = ""
         self._update_release_page_url = ""
+        self._companion_server = None
+        self._companion_url = ""
+        self._companion_token = ""
+        self._companion_login_url = ""
+        self._companion_search_url = ""
+        self._companion_login_qr = ""
+        self._companion_search_qr = ""
         self.restartRequested.connect(self._restart_process, Qt.ConnectionType.QueuedConnection)
+        self._companion_login_requested.connect(self.login, Qt.ConnectionType.QueuedConnection)
+        self._companion_search_requested.connect(self.searchCompanion, Qt.ConnectionType.QueuedConnection)
 
     def emit_json(self, signal, data):
         signal.emit(json.dumps(safe_json(data), ensure_ascii=False))
@@ -800,6 +1121,13 @@ class Backend(QObject):
                 self.errorChanged.emit(f"Не удалось загрузить /continue/: {e}")
 
         self.run_async(work)
+
+    @Slot(str)
+    def searchCompanion(self, query: str) -> None:
+        q = (query or "").strip()
+        if q:
+            self.companionSearchApplied.emit(q)
+        self.search(query)
 
     @Slot(str)
     def search(self, query):
@@ -1415,8 +1743,104 @@ class Backend(QObject):
 
         self.run_async(work)
 
+    def _emit_companion_urls_and_qr(self) -> None:
+        self.companionServerUrlChanged.emit(self._companion_url or "")
+        self.companionLoginUrlChanged.emit(self._companion_login_url or "")
+        self.companionSearchUrlChanged.emit(self._companion_search_url or "")
+        self.companionLoginQrChanged.emit(self._companion_login_qr or "")
+        self.companionSearchQrChanged.emit(self._companion_search_qr or "")
+
+    @Slot(result=str)
+    def companionServerUrl(self) -> str:
+        return getattr(self, "_companion_url", "") or ""
+
+    @Slot()
+    def startCompanionServer(self) -> None:
+        if getattr(self, "_companion_server", None) is not None:
+            self._emit_companion_urls_and_qr()
+            return
+        try:
+            token = secrets.token_urlsafe(16)
+            port_s = (os.environ.get("REZKA_COMPANION_PORT") or "").strip()
+            port = int(port_s) if port_s.isdigit() else 0
+            httpd = _ThreadingHTTPServer(("0.0.0.0", port), _CompanionHandler)
+            httpd._rezka_token = token
+            httpd._rezka_backend = self
+            real_port = int(httpd.server_address[1])
+            base = f"http://{_lan_ipv4()}:{real_port}"
+            url = base + "/"
+            login_u = base + "/login"
+            search_u = base + "/search"
+            self._companion_token = token
+            self._companion_url = url
+            self._companion_login_url = login_u
+            self._companion_search_url = search_u
+            self._companion_server = httpd
+
+            def _serve() -> None:
+                try:
+                    httpd.serve_forever()
+                except Exception as e:
+                    launch_log(f"companion serve_forever: {e}")
+
+            threading.Thread(target=_serve, name="rezka-companion", daemon=True).start()
+            self._companion_login_qr = _companion_qr_data_url(login_u, box_size=5, border=2)
+            self._companion_search_qr = _companion_qr_data_url(search_u, box_size=3, border=1)
+            self._emit_companion_urls_and_qr()
+            launch_log(f"companion {base} login={login_u} search={search_u}")
+        except OSError as e:
+            self.errorChanged.emit(f"Не удалось открыть порт для телефона: {e}")
+            self._companion_server = None
+            self._companion_url = ""
+            self._companion_login_url = ""
+            self._companion_search_url = ""
+            self._companion_login_qr = ""
+            self._companion_search_qr = ""
+            self.companionServerUrlChanged.emit("")
+            self.companionLoginUrlChanged.emit("")
+            self.companionSearchUrlChanged.emit("")
+            self.companionLoginQrChanged.emit("")
+            self.companionSearchQrChanged.emit("")
+        except Exception as e:
+            launch_log(traceback.format_exc())
+            self.errorChanged.emit(f"Сервер для телефона: {e}")
+            self._companion_server = None
+            self._companion_url = ""
+            self._companion_login_url = ""
+            self._companion_search_url = ""
+            self._companion_login_qr = ""
+            self._companion_search_qr = ""
+            self.companionServerUrlChanged.emit("")
+            self.companionLoginUrlChanged.emit("")
+            self.companionSearchUrlChanged.emit("")
+            self.companionLoginQrChanged.emit("")
+            self.companionSearchQrChanged.emit("")
+
+    @Slot()
+    def stopCompanionServer(self) -> None:
+        srv = getattr(self, "_companion_server", None)
+        if srv is None:
+            return
+        try:
+            srv.shutdown()
+        except Exception:
+            pass
+        self._companion_server = None
+        self._companion_url = ""
+        self._companion_token = ""
+        self._companion_login_url = ""
+        self._companion_search_url = ""
+        self._companion_login_qr = ""
+        self._companion_search_qr = ""
+        self.companionServerUrlChanged.emit("")
+        self.companionLoginUrlChanged.emit("")
+        self.companionSearchUrlChanged.emit("")
+        self.companionLoginQrChanged.emit("")
+        self.companionSearchQrChanged.emit("")
+
     @Slot()
     def quit(self):
+        self.stopCompanionServer()
         QGuiApplication.quit()
 
     def _cec_command(self, command: bytes) -> None:

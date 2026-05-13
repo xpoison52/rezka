@@ -48,6 +48,10 @@ ApplicationWindow {
     property bool watchSetupFlow: false
     property var qualityOptions: ["Auto", "360p", "480p", "720p", "1080p", "1080p Ultra"]
     property var appUpdate: ({ status: "idle", message: "", commitsBehind: 0, localShort: "", remoteShort: "", channel: "github" })
+    property string companionLoginPageUrl: ""
+    property string companionSearchPageUrl: ""
+    property string companionLoginQr: ""
+    property string companionSearchQr: ""
 
     property int hkLeft: Qt.Key_Left
     property int hkRight: Qt.Key_Right
@@ -62,6 +66,8 @@ ApplicationWindow {
 
     component TvButton: Button {
         id: tvButton
+        property bool tvPassNavigationKeys: false
+        focusPolicy: tvPassNavigationKeys ? Qt.NoFocus : Qt.TabFocus
         font.pixelSize: 20
         padding: 10
         leftPadding: 14
@@ -81,6 +87,16 @@ ApplicationWindow {
             color: tvButton.activeFocus ? "#3d6fb6" : tvButton.down ? "#264d82" : tvButton.hovered ? "#343434" : "#242424"
             border.width: tvButton.activeFocus ? 3 : 1
             border.color: tvButton.activeFocus ? "#b7d7ff" : "#3c3c3c"
+        }
+
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function (event) {
+            if (!tvButton.activeFocus || !tvButton.enabled)
+                return
+            if (!root.isTvActivateButton(event))
+                return
+            event.accepted = true
+            tvButton.clicked()
         }
     }
 
@@ -483,6 +499,20 @@ ApplicationWindow {
         return event.key === Qt.Key_Yes || event.nativeScanCode === 352
     }
 
+    function isTvActivateButton(event) {
+        if (!event)
+            return false
+        if (isLinuxTvOkEvent(event))
+            return true
+        if (event.key === hkConfirm)
+            return true
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+            return true
+        if (event.key === Qt.Key_Select)
+            return true
+        return false
+    }
+
     function applyTvHotkeysFromJsonText(jsonText) {
         var raw = (jsonText || "").trim()
         if (!raw || raw === "{}") {
@@ -508,6 +538,70 @@ ApplicationWindow {
 
     function reloadTvHotkeysFromBackend() {
         applyTvHotkeysFromJsonText(backend.readTvHotkeysJson())
+    }
+
+    function loginFormNavigateHorizontal(goRight) {
+        var cur = root.activeFocusItem
+        if (cur !== email && cur !== password && cur !== loginButton && cur !== updateCheckLoginButton)
+            return false
+        if (goRight) {
+            if (cur === email)
+                password.forceActiveFocus()
+            else if (cur === password)
+                loginButton.forceActiveFocus()
+            else if (cur === loginButton)
+                updateCheckLoginButton.forceActiveFocus()
+            else if (cur === updateCheckLoginButton)
+                email.forceActiveFocus()
+            else
+                return false
+        } else {
+            if (cur === email)
+                loginButton.forceActiveFocus()
+            else if (cur === password)
+                email.forceActiveFocus()
+            else if (cur === loginButton)
+                password.forceActiveFocus()
+            else if (cur === updateCheckLoginButton)
+                password.forceActiveFocus()
+            else
+                return false
+        }
+        return true
+    }
+
+    function continueToolbarNavigateHorizontal(goRight) {
+        var cur = root.activeFocusItem
+        if (cur !== continueTabButton && cur !== searchField && cur !== searchButton && cur !== updateCheckToolbarButton && cur !== quitButton)
+            return false
+        if (goRight) {
+            if (cur === continueTabButton)
+                searchField.forceActiveFocus()
+            else if (cur === searchField)
+                searchButton.forceActiveFocus()
+            else if (cur === searchButton)
+                updateCheckToolbarButton.forceActiveFocus()
+            else if (cur === updateCheckToolbarButton)
+                quitButton.forceActiveFocus()
+            else if (cur === quitButton)
+                continueTabButton.forceActiveFocus()
+            else
+                return false
+        } else {
+            if (cur === continueTabButton)
+                quitButton.forceActiveFocus()
+            else if (cur === searchField)
+                continueTabButton.forceActiveFocus()
+            else if (cur === searchButton)
+                searchField.forceActiveFocus()
+            else if (cur === updateCheckToolbarButton)
+                searchButton.forceActiveFocus()
+            else if (cur === quitButton)
+                updateCheckToolbarButton.forceActiveFocus()
+            else
+                return false
+        }
+        return true
     }
 
     function tvWizardKeyNames() {
@@ -755,6 +849,13 @@ ApplicationWindow {
             loadingMessage = message
         }
 
+        function onCompanionSearchApplied(q) {
+            listTitle = "Поиск: " + q
+            searchField.text = q
+            if (stack.currentIndex === 1)
+                grid.forceActiveFocus()
+        }
+
         function onAppUpdateChanged(json) {
             appUpdate = JSON.parse(json)
             const s = appUpdate.status
@@ -764,6 +865,22 @@ ApplicationWindow {
 
         function onTvHotkeysChanged(json) {
             root.reloadTvHotkeysFromBackend()
+        }
+
+        function onCompanionLoginUrlChanged(u) {
+            root.companionLoginPageUrl = u || ""
+        }
+
+        function onCompanionSearchUrlChanged(u) {
+            root.companionSearchPageUrl = u || ""
+        }
+
+        function onCompanionLoginQrChanged(dataUrl) {
+            root.companionLoginQr = dataUrl || ""
+        }
+
+        function onCompanionSearchQrChanged(dataUrl) {
+            root.companionSearchQr = dataUrl || ""
         }
     }
 
@@ -865,8 +982,6 @@ ApplicationWindow {
                             appUpdatePopup.close()
                             backend.applyAppUpdateAndRestart()
                         }
-                        Keys.onReturnPressed: clicked()
-                        Keys.onEnterPressed: clicked()
                     }
 
                     TvButton {
@@ -875,8 +990,6 @@ ApplicationWindow {
                         font.pixelSize: 18
                         KeyNavigation.left: updateInstallBtn
                         onClicked: appUpdatePopup.close()
-                        Keys.onReturnPressed: clicked()
-                        Keys.onEnterPressed: clicked()
                     }
                 }
 
@@ -887,27 +1000,46 @@ ApplicationWindow {
                     text: "OK"
                     font.pixelSize: 18
                     onClicked: appUpdatePopup.close()
-                    Keys.onReturnPressed: clicked()
-                    Keys.onEnterPressed: clicked()
                 }
             }
 
             Keys.onPressed: function (event) {
                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                     return
-                if (event.key === root.hkBack || event.key === Qt.Key_Escape) {
+                var k = event.key
+                var left = k === root.hkLeft || k === Qt.Key_Left
+                var right = k === root.hkRight || k === Qt.Key_Right
+                var up = k === root.hkUp || k === Qt.Key_Up
+                var down = k === root.hkDown || k === Qt.Key_Down
+                if (appUpdate.status === "behind" && (left || right || up || down)) {
+                    var fi0 = root.activeFocusItem
+                    if (fi0 === updateInstallBtn || fi0 === updateLaterBtn) {
+                        if (fi0 === updateInstallBtn)
+                            updateLaterBtn.forceActiveFocus()
+                        else
+                            updateInstallBtn.forceActiveFocus()
+                        event.accepted = true
+                        return
+                    }
+                }
+                if (k === root.hkBack || k === Qt.Key_Escape) {
                     if (!(appUpdate.status === "pulling" || appUpdate.status === "restarting" || appUpdate.status === "checking")) {
                         event.accepted = true
                         appUpdatePopup.close()
                     }
                     return
                 }
-                if (event.key === Qt.Key_Yes || event.nativeScanCode === 352) {
+                if (root.isTvActivateButton(event)) {
                     var fi = root.activeFocusItem
                     if (fi && typeof fi.click === "function") {
                         event.accepted = true
                         fi.click()
                     }
+                    return
+                }
+                if ((up || down) && (appUpdate.status === "current" || appUpdate.status === "error") && updateOkBtn.visible) {
+                    updateOkBtn.forceActiveFocus()
+                    event.accepted = true
                 }
             }
         }
@@ -946,170 +1078,215 @@ ApplicationWindow {
                 currentIndex = 1
                 refocusGridTimer.start()
             }
+            if (currentIndex === 0 || currentIndex === 1)
+                backend.startCompanionServer()
         }
 
         Item {
             id: loginPage
             focus: true
 
-            ColumnLayout {
-                width: 520
+            RowLayout {
                 anchors.centerIn: parent
-                spacing: 18
+                spacing: 28
 
-                Text {
-                    text: "Rezka Native TV"
-                    color: "white"
-                    font.pixelSize: 42
-                    font.bold: true
-                    Layout.alignment: Qt.AlignHCenter
+                ColumnLayout {
+                    id: loginFormColumn
+                    spacing: 18
+                    implicitWidth: Math.min(460, root.width * 0.4)
+
+                    Text {
+                        text: "Rezka Native TV"
+                        color: "white"
+                        font.pixelSize: 42
+                        font.bold: true
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    TextField {
+                        id: email
+                        placeholderText: "Email"
+                        font.pixelSize: 24
+                        Layout.fillWidth: true
+                        focus: true
+                        KeyNavigation.down: password
+                        KeyNavigation.up: updateCheckLoginButton
+                        Keys.onDownPressed: function (event) {
+                            password.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onUpPressed: function (event) {
+                            updateCheckLoginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onRightPressed: function (event) {
+                            password.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onLeftPressed: function (event) {
+                            loginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        background: Rectangle {
+                            radius: 8
+                            color: "#202020"
+                            border.width: email.activeFocus ? 3 : 1
+                            border.color: email.activeFocus ? "#b7d7ff" : "#3c3c3c"
+                        }
+                    }
+
+                    TextField {
+                        id: password
+                        placeholderText: "Password"
+                        echoMode: TextInput.Password
+                        font.pixelSize: 24
+                        Layout.fillWidth: true
+                        KeyNavigation.up: email
+                        KeyNavigation.down: loginButton
+                        Keys.onDownPressed: function (event) {
+                            loginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onUpPressed: function (event) {
+                            email.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onRightPressed: function (event) {
+                            loginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onLeftPressed: function (event) {
+                            email.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        background: Rectangle {
+                            radius: 8
+                            color: "#202020"
+                            border.width: password.activeFocus ? 3 : 1
+                            border.color: password.activeFocus ? "#b7d7ff" : "#3c3c3c"
+                        }
+                    }
+
+                    TvButton {
+                        id: loginButton
+                        text: "Войти"
+                        font.pixelSize: 24
+                        Layout.fillWidth: true
+                        KeyNavigation.up: password
+                        KeyNavigation.down: updateCheckLoginButton
+                        Keys.onUpPressed: function (event) {
+                            password.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onDownPressed: function (event) {
+                            updateCheckLoginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onRightPressed: function (event) {
+                            email.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onLeftPressed: function (event) {
+                            password.forceActiveFocus()
+                            event.accepted = true
+                        }
+
+                        onClicked: {
+                            errorText.text = ""
+                            backend.login(email.text, password.text)
+                        }
+                    }
+
+                    TvButton {
+                        id: updateCheckLoginButton
+                        text: "Проверить обновления"
+                        font.pixelSize: 20
+                        Layout.fillWidth: true
+                        KeyNavigation.up: loginButton
+                        KeyNavigation.down: email
+                        Keys.onUpPressed: function (event) {
+                            loginButton.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onDownPressed: function (event) {
+                            email.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onRightPressed: function (event) {
+                            email.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        Keys.onLeftPressed: function (event) {
+                            password.forceActiveFocus()
+                            event.accepted = true
+                        }
+                        onClicked: backend.checkForAppUpdate()
+                    }
+
+                    Text {
+                        id: errorText
+                        color: "#ff7777"
+                        font.pixelSize: 18
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                        text: loadingMessage
+                        color: "#bbbbbb"
+                        font.pixelSize: 18
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        visible: loadingMessage.length > 0
+                    }
                 }
 
-                TextField {
-                    id: email
-                    placeholderText: "Email"
-                    font.pixelSize: 24
-                    Layout.fillWidth: true
-                    focus: true
-                    KeyNavigation.down: password
-                    Keys.onDownPressed: function (event) {
-                        password.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onUpPressed: function (event) {
-                        updateCheckLoginButton.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onRightPressed: function (event) {
-                        password.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onLeftPressed: function (event) {
-                        loginButton.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    background: Rectangle {
-                        radius: 8
-                        color: "#202020"
-                        border.width: email.activeFocus ? 3 : 1
-                        border.color: email.activeFocus ? "#b7d7ff" : "#3c3c3c"
-                    }
-                }
+                ColumnLayout {
+                    spacing: 8
+                    Layout.minimumWidth: 168
+                    Layout.maximumWidth: 220
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: 6
 
-                TextField {
-                    id: password
-                    placeholderText: "Password"
-                    echoMode: TextInput.Password
-                    font.pixelSize: 24
-                    Layout.fillWidth: true
-                    KeyNavigation.up: email
-                    KeyNavigation.down: loginButton
-                    Keys.onDownPressed: function (event) {
-                        loginButton.forceActiveFocus()
-                        event.accepted = true
+                    Text {
+                        text: "Пульт — только вход"
+                        color: "#c8dcff"
+                        font.pixelSize: 16
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
                     }
-                    Keys.onUpPressed: function (event) {
-                        email.forceActiveFocus()
-                        event.accepted = true
+                    Image {
+                        width: 160
+                        height: 160
+                        fillMode: Image.PreserveAspectFit
+                        source: root.companionLoginQr
+                        asynchronous: false
+                        cache: false
+                        Layout.alignment: Qt.AlignHCenter
                     }
-                    Keys.onRightPressed: function (event) {
-                        loginButton.forceActiveFocus()
-                        event.accepted = true
+                    Text {
+                        text: root.companionLoginPageUrl.length ? root.companionLoginPageUrl : "…"
+                        color: "#888888"
+                        font.pixelSize: 11
+                        font.family: "monospace"
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                        wrapMode: Text.WrapAnywhere
+                        maximumLineCount: 8
                     }
-                    Keys.onLeftPressed: function (event) {
-                        email.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    background: Rectangle {
-                        radius: 8
-                        color: "#202020"
-                        border.width: password.activeFocus ? 3 : 1
-                        border.color: password.activeFocus ? "#b7d7ff" : "#3c3c3c"
-                    }
-                }
-
-                TvButton {
-                    id: loginButton
-                    text: "Войти"
-                    font.pixelSize: 24
-                    Layout.fillWidth: true
-                    KeyNavigation.up: password
-                    KeyNavigation.down: updateCheckLoginButton
-                    Keys.onUpPressed: function (event) {
-                        password.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onDownPressed: function (event) {
-                        updateCheckLoginButton.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onRightPressed: function (event) {
-                        email.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onLeftPressed: function (event) {
-                        password.forceActiveFocus()
-                        event.accepted = true
-                    }
-
-                    onClicked: {
-                        errorText.text = ""
-                        backend.login(email.text, password.text)
-                    }
-
-                    Keys.onReturnPressed: clicked()
-                    Keys.onEnterPressed: clicked()
-                }
-
-                TvButton {
-                    id: updateCheckLoginButton
-                    text: "Проверить обновления"
-                    font.pixelSize: 20
-                    Layout.fillWidth: true
-                    KeyNavigation.up: loginButton
-                    KeyNavigation.down: email
-                    Keys.onUpPressed: function (event) {
-                        loginButton.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onDownPressed: function (event) {
-                        email.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onRightPressed: function (event) {
-                        email.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    Keys.onLeftPressed: function (event) {
-                        password.forceActiveFocus()
-                        event.accepted = true
-                    }
-                    onClicked: backend.checkForAppUpdate()
-                    Keys.onReturnPressed: clicked()
-                    Keys.onEnterPressed: clicked()
-                }
-
-                Text {
-                    id: errorText
-                    color: "#ff7777"
-                    font.pixelSize: 18
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-
-                Text {
-                    text: loadingMessage
-                    color: "#bbbbbb"
-                    font.pixelSize: 18
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    visible: loadingMessage.length > 0
                 }
             }
 
             Keys.onPressed: function (event) {
                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                     return
+                var left = event.key === root.hkLeft || event.key === Qt.Key_Left
+                var right = event.key === root.hkRight || event.key === Qt.Key_Right
+                if ((left || right) && loginFormNavigateHorizontal(right)) {
+                    event.accepted = true
+                    return
+                }
                 if (event.key === root.hkBack)
                     backend.quit()
             }
@@ -1118,6 +1295,19 @@ ApplicationWindow {
         Item {
             id: continuePage
             focus: true
+
+            Keys.onPressed: function (event) {
+                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
+                    return
+                var left = event.key === root.hkLeft || event.key === Qt.Key_Left
+                var right = event.key === root.hkRight || event.key === Qt.Key_Right
+                if (!left && !right)
+                    return
+                if (continueToolbarNavigateHorizontal(right)) {
+                    event.accepted = true
+                    return
+                }
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -1169,6 +1359,21 @@ ApplicationWindow {
                         KeyNavigation.down: grid
                     }
 
+                    Item {
+                        Layout.preferredWidth: 52
+                        Layout.preferredHeight: 52
+                        Layout.maximumWidth: 52
+                        Layout.maximumHeight: 52
+                        Layout.alignment: Qt.AlignVCenter
+                        Image {
+                            anchors.fill: parent
+                            fillMode: Image.PreserveAspectFit
+                            source: root.companionSearchQr
+                            asynchronous: false
+                            cache: false
+                        }
+                    }
+
                     TvButton {
                         id: searchButton
                         text: "Найти"
@@ -1191,8 +1396,6 @@ ApplicationWindow {
                         KeyNavigation.left: searchButton
                         KeyNavigation.right: quitButton
                         KeyNavigation.down: grid
-                        Keys.onReturnPressed: clicked()
-                        Keys.onEnterPressed: clicked()
                     }
 
                     TvButton {
@@ -1311,21 +1514,14 @@ ApplicationWindow {
                     Keys.onPressed: function (event) {
                         if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                             return
-                        if (root.isLinuxTvOkEvent(event)) {
+                        if (root.isTvActivateButton(event)) {
                             if (currentIndex >= 0 && historyItems[currentIndex]) {
                                 openListItem(historyItems[currentIndex])
                                 event.accepted = true
                             }
                             return
                         }
-                        if (event.key === root.hkConfirm || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                            if (currentIndex >= 0 && historyItems[currentIndex]) {
-                                openListItem(historyItems[currentIndex])
-                                event.accepted = true
-                            }
-                            return
-                        }
-                        if (event.key === root.hkUp) {
+                        if (event.key === root.hkUp || event.key === Qt.Key_Up) {
                             if (currentIndex <= 0) {
                                 continueTabButton.forceActiveFocus()
                                 event.accepted = true
@@ -1335,7 +1531,7 @@ ApplicationWindow {
                             }
                             return
                         }
-                        if (event.key === root.hkDown) {
+                        if (event.key === root.hkDown || event.key === Qt.Key_Down) {
                             if (currentIndex < grid.count - 1) {
                                 grid.currentIndex = grid.currentIndex + 1
                                 event.accepted = true
@@ -1462,8 +1658,6 @@ ApplicationWindow {
                             enabled: loadingMessage !== "Получаем видеопоток..."
                             onClicked: continueWatch()
 
-                            Keys.onReturnPressed: clicked()
-                            Keys.onEnterPressed: clicked()
                             KeyNavigation.up: detailsBackButton
                             KeyNavigation.down: watchButton
                             KeyNavigation.left: continueWatchButton
@@ -1478,8 +1672,6 @@ ApplicationWindow {
                             enabled: loadingMessage !== "Получаем видеопоток..."
                             onClicked: startWatchSelectionFlow()
 
-                            Keys.onReturnPressed: clicked()
-                            Keys.onEnterPressed: clicked()
                             KeyNavigation.up: continueWatchButton.visible ? continueWatchButton : detailsBackButton
                             KeyNavigation.down: detailsBackButton
                             KeyNavigation.left: watchButton
@@ -1585,15 +1777,74 @@ ApplicationWindow {
             Keys.onPressed: function (event) {
                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                     return
+                if (stack.currentIndex === 2 && !translatorModal.visible && !qualityModal.visible && !seasonEpisodeModal.visible) {
+                    var k = event.key
+                    var onBack = detailsBackButton.activeFocus
+                    var onCont = continueWatchButton.visible && continueWatchButton.activeFocus
+                    var onWatch = watchButton.activeFocus
+                    var onBtn = onBack || onCont || onWatch
+                    if (!onBtn && (k === root.hkUp || k === root.hkDown || k === root.hkLeft || k === root.hkRight)) {
+                        watchButton.forceActiveFocus()
+                        event.accepted = true
+                        return
+                    }
+                    if (k === root.hkDown) {
+                        if (onBack) {
+                            if (continueWatchButton.visible)
+                                continueWatchButton.forceActiveFocus()
+                            else
+                                watchButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                        if (onCont) {
+                            watchButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                        if (onWatch) {
+                            detailsBackButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                    }
+                    if (k === root.hkUp) {
+                        if (onWatch) {
+                            if (continueWatchButton.visible)
+                                continueWatchButton.forceActiveFocus()
+                            else
+                                detailsBackButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                        if (onCont) {
+                            detailsBackButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                        if (onBack) {
+                            event.accepted = true
+                            return
+                        }
+                    }
+                    if (k === root.hkLeft || k === root.hkRight) {
+                        if (onWatch && continueWatchButton.visible) {
+                            continueWatchButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                        if (onCont) {
+                            watchButton.forceActiveFocus()
+                            event.accepted = true
+                            return
+                        }
+                    }
+                }
                 if (event.key !== root.hkBack)
                     return
                 event.accepted = true
                 stack.currentIndex = 1
                 grid.forceActiveFocus()
-            }
-
-            Keys.onDownPressed: {
-                event.accepted = false
             }
 
             Popup {
@@ -1610,7 +1861,10 @@ ApplicationWindow {
                     border.width: 2
                     border.color: "#6fa8df"
                 }
-                onOpened: translatorList.currentIndex = selectedTranslatorIndex
+                onOpened: {
+                    translatorList.currentIndex = selectedTranslatorIndex
+                    translatorList.forceActiveFocus()
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -1629,38 +1883,14 @@ ApplicationWindow {
                         model: translatorsModel()
                         clip: true
                         spacing: 8
-                        keyNavigationEnabled: true
                         delegate: TvButton {
+                            tvPassNavigationKeys: true
                             width: ListView.view.width
                             text: modelData.translator_name || ("Озвучка " + (index + 1))
                             checkable: true
-                            checked: index === selectedTranslatorIndex
+                            checked: index === translatorList.currentIndex
                             onClicked: {
                                 setTranslatorIndex(index, false)
-                                translatorModal.close()
-                                if (watchSetupFlow) {
-                                    qualityModal.open()
-                                    qualityList.forceActiveFocus()
-                                } else {
-                                    watchButton.forceActiveFocus()
-                                }
-                            }
-                        }
-                        Keys.onReturnPressed: {
-                            if (currentIndex >= 0) {
-                                setTranslatorIndex(currentIndex, false)
-                                translatorModal.close()
-                                if (watchSetupFlow) {
-                                    qualityModal.open()
-                                    qualityList.forceActiveFocus()
-                                } else {
-                                    watchButton.forceActiveFocus()
-                                }
-                            }
-                        }
-                        Keys.onEnterPressed: {
-                            if (currentIndex >= 0) {
-                                setTranslatorIndex(currentIndex, false)
                                 translatorModal.close()
                                 if (watchSetupFlow) {
                                     qualityModal.open()
@@ -1673,6 +1903,34 @@ ApplicationWindow {
                         Keys.onPressed: function (event) {
                             if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                 return
+                            if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                if (currentIndex < count - 1) {
+                                    currentIndex = currentIndex + 1
+                                }
+                                event.accepted = true
+                                return
+                            }
+                            if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                if (currentIndex > 0) {
+                                    currentIndex = currentIndex - 1
+                                }
+                                event.accepted = true
+                                return
+                            }
+                            if (root.isTvActivateButton(event)) {
+                                if (currentIndex >= 0) {
+                                    setTranslatorIndex(currentIndex, false)
+                                    translatorModal.close()
+                                    if (watchSetupFlow) {
+                                        qualityModal.open()
+                                        qualityList.forceActiveFocus()
+                                    } else {
+                                        watchButton.forceActiveFocus()
+                                    }
+                                }
+                                event.accepted = true
+                                return
+                            }
                             if (event.key !== root.hkBack)
                                 return
                             translatorModal.close()
@@ -1698,7 +1956,10 @@ ApplicationWindow {
                     border.width: 2
                     border.color: "#6fa8df"
                 }
-                onOpened: qualityList.currentIndex = Math.max(0, qualityOptions.indexOf(selectedQuality))
+                onOpened: {
+                    qualityList.currentIndex = Math.max(0, qualityOptions.indexOf(selectedQuality))
+                    qualityList.forceActiveFocus()
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -1717,38 +1978,14 @@ ApplicationWindow {
                         model: qualityOptions
                         clip: true
                         spacing: 8
-                        keyNavigationEnabled: true
                         delegate: TvButton {
+                            tvPassNavigationKeys: true
                             width: ListView.view.width
                             text: modelData
                             checkable: true
-                            checked: modelData === selectedQuality
+                            checked: index === qualityList.currentIndex
                             onClicked: {
                                 selectedQuality = modelData
-                                qualityModal.close()
-                                if (watchSetupFlow) {
-                                    watchSetupFlow = false
-                                    startWatchAt(0)
-                                } else {
-                                    watchButton.forceActiveFocus()
-                                }
-                            }
-                        }
-                        Keys.onReturnPressed: {
-                            if (currentIndex >= 0) {
-                                selectedQuality = qualityOptions[currentIndex]
-                                qualityModal.close()
-                                if (watchSetupFlow) {
-                                    watchSetupFlow = false
-                                    startWatchAt(0)
-                                } else {
-                                    watchButton.forceActiveFocus()
-                                }
-                            }
-                        }
-                        Keys.onEnterPressed: {
-                            if (currentIndex >= 0) {
-                                selectedQuality = qualityOptions[currentIndex]
                                 qualityModal.close()
                                 if (watchSetupFlow) {
                                     watchSetupFlow = false
@@ -1761,6 +1998,34 @@ ApplicationWindow {
                         Keys.onPressed: function (event) {
                             if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                 return
+                            if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                if (currentIndex < count - 1) {
+                                    currentIndex = currentIndex + 1
+                                }
+                                event.accepted = true
+                                return
+                            }
+                            if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                if (currentIndex > 0) {
+                                    currentIndex = currentIndex - 1
+                                }
+                                event.accepted = true
+                                return
+                            }
+                            if (root.isTvActivateButton(event)) {
+                                if (currentIndex >= 0) {
+                                    selectedQuality = qualityOptions[currentIndex]
+                                    qualityModal.close()
+                                    if (watchSetupFlow) {
+                                        watchSetupFlow = false
+                                        startWatchAt(0)
+                                    } else {
+                                        watchButton.forceActiveFocus()
+                                    }
+                                }
+                                event.accepted = true
+                                return
+                            }
                             if (event.key !== root.hkBack)
                                 return
                             qualityModal.close()
@@ -1791,6 +2056,7 @@ ApplicationWindow {
                     modalEpisodeIndex = selectedEpisodeIndex
                     modalSeasonsList.currentIndex = modalSeasonIndex
                     modalEpisodesList.currentIndex = modalEpisodeIndex
+                    modalSeasonsList.forceActiveFocus()
                 }
 
                 ColumnLayout {
@@ -1815,6 +2081,7 @@ ApplicationWindow {
                             clip: true
                             spacing: 8
                             delegate: TvButton {
+                                tvPassNavigationKeys: true
                                 width: ListView.view.width
                                 text: modelData.season_text || ("Сезон " + modelData.season)
                                 checkable: true
@@ -1826,25 +2093,44 @@ ApplicationWindow {
                                     modalEpisodesList.forceActiveFocus()
                                 }
                             }
-                            Keys.onReturnPressed: {
-                                if (currentIndex >= 0) {
-                                    modalSeasonIndex = currentIndex
-                                    modalEpisodeIndex = 0
-                                    modalEpisodesList.currentIndex = 0
-                                    modalEpisodesList.forceActiveFocus()
-                                }
-                            }
-                            Keys.onEnterPressed: {
-                                if (currentIndex >= 0) {
-                                    modalSeasonIndex = currentIndex
-                                    modalEpisodeIndex = 0
-                                    modalEpisodesList.currentIndex = 0
-                                    modalEpisodesList.forceActiveFocus()
-                                }
-                            }
                             Keys.onPressed: function (event) {
                                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                     return
+                                if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                    if (currentIndex < count - 1) {
+                                        currentIndex = currentIndex + 1
+                                        modalSeasonIndex = currentIndex
+                                        modalEpisodeIndex = 0
+                                        modalEpisodesList.currentIndex = 0
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                    if (currentIndex > 0) {
+                                        currentIndex = currentIndex - 1
+                                        modalSeasonIndex = currentIndex
+                                        modalEpisodeIndex = 0
+                                        modalEpisodesList.currentIndex = 0
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkRight || event.key === Qt.Key_Right) {
+                                    modalEpisodesList.forceActiveFocus()
+                                    event.accepted = true
+                                    return
+                                }
+                                if (root.isTvActivateButton(event)) {
+                                    if (currentIndex >= 0) {
+                                        modalSeasonIndex = currentIndex
+                                        modalEpisodeIndex = 0
+                                        modalEpisodesList.currentIndex = 0
+                                        modalEpisodesList.forceActiveFocus()
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
                                 if (event.key !== root.hkBack)
                                     return
                                 seasonEpisodeModal.close()
@@ -1865,6 +2151,7 @@ ApplicationWindow {
                             clip: true
                             spacing: 8
                             delegate: TvButton {
+                                tvPassNavigationKeys: true
                                 width: ListView.view.width
                                 text: modelData.episode_text || ("Серия " + modelData.episode)
                                 checkable: true
@@ -1878,30 +2165,42 @@ ApplicationWindow {
                                     translatorList.forceActiveFocus()
                                 }
                             }
-                            Keys.onReturnPressed: {
-                                if (currentIndex >= 0) {
-                                    modalEpisodeIndex = currentIndex
-                                    setSeasonIndex(modalSeasonIndex)
-                                    setEpisodeIndex(modalEpisodeIndex)
-                                    seasonEpisodeModal.close()
-                                    translatorModal.open()
-                                    translatorList.forceActiveFocus()
-                                }
-                            }
-                            Keys.onEnterPressed: {
-                                if (currentIndex >= 0) {
-                                    modalEpisodeIndex = currentIndex
-                                    setSeasonIndex(modalSeasonIndex)
-                                    setEpisodeIndex(modalEpisodeIndex)
-                                    seasonEpisodeModal.close()
-                                    translatorModal.open()
-                                    translatorList.forceActiveFocus()
-                                }
-                            }
-                            Keys.onLeftPressed: modalSeasonsList.forceActiveFocus()
                             Keys.onPressed: function (event) {
                                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                     return
+                                if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                    if (currentIndex < count - 1) {
+                                        currentIndex = currentIndex + 1
+                                        modalEpisodeIndex = currentIndex
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                    if (currentIndex > 0) {
+                                        currentIndex = currentIndex - 1
+                                        modalEpisodeIndex = currentIndex
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkLeft || event.key === Qt.Key_Left) {
+                                    modalSeasonsList.forceActiveFocus()
+                                    event.accepted = true
+                                    return
+                                }
+                                if (root.isTvActivateButton(event)) {
+                                    if (currentIndex >= 0) {
+                                        modalEpisodeIndex = currentIndex
+                                        setSeasonIndex(modalSeasonIndex)
+                                        setEpisodeIndex(modalEpisodeIndex)
+                                        seasonEpisodeModal.close()
+                                        translatorModal.open()
+                                        translatorList.forceActiveFocus()
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
                                 if (event.key !== root.hkBack)
                                     return
                                 seasonEpisodeModal.close()
@@ -2001,7 +2300,9 @@ ApplicationWindow {
                     id: mediaPlayer
                     objectName: "mediaPlayer"
                     videoOutput: videoOutput
-                    audioOutput: AudioOutput {}
+                    audioOutput: AudioOutput {
+                        id: playerStreamAudio
+                    }
                     Component.onCompleted: backend.configureMediaPlayer(mediaPlayer)
 
                     onMediaStatusChanged: {
@@ -2223,6 +2524,7 @@ ApplicationWindow {
                                                 mediaPlayer.play()
                                             showPlayerControls()
                                         }
+                                        KeyNavigation.left: subtitleBiggerButton
                                         KeyNavigation.right: previousEpisodeButton.visible ? previousEpisodeButton : playerQualityButton
                                     }
 
@@ -2377,7 +2679,10 @@ ApplicationWindow {
                         border.width: 2
                         border.color: "#6fa8df"
                     }
-                    onOpened: playerQualityList.currentIndex = Math.max(0, (currentStream.availableQualities || []).indexOf(selectedQuality))
+                    onOpened: {
+                        playerQualityList.currentIndex = Math.max(0, (currentStream.availableQualities || []).indexOf(selectedQuality))
+                        playerQualityList.forceActiveFocus()
+                    }
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -2396,28 +2701,14 @@ ApplicationWindow {
                             model: currentStream.availableQualities || []
                             clip: true
                             spacing: 8
-                            keyNavigationEnabled: true
                             delegate: TvButton {
+                                tvPassNavigationKeys: true
                                 width: ListView.view.width
                                 text: modelData
                                 checkable: true
-                                checked: modelData === selectedQuality
+                                checked: index === playerQualityList.currentIndex
                                 onClicked: {
                                     switchStreamQuality(modelData)
-                                    playerQualityModal.close()
-                                    playerQualityButton.forceActiveFocus()
-                                }
-                            }
-                            Keys.onReturnPressed: {
-                                if (currentIndex >= 0) {
-                                    switchStreamQuality((currentStream.availableQualities || [])[currentIndex] || "")
-                                    playerQualityModal.close()
-                                    playerQualityButton.forceActiveFocus()
-                                }
-                            }
-                            Keys.onEnterPressed: {
-                                if (currentIndex >= 0) {
-                                    switchStreamQuality((currentStream.availableQualities || [])[currentIndex] || "")
                                     playerQualityModal.close()
                                     playerQualityButton.forceActiveFocus()
                                 }
@@ -2425,6 +2716,29 @@ ApplicationWindow {
                             Keys.onPressed: function (event) {
                                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                     return
+                                if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                    if (currentIndex < count - 1) {
+                                        currentIndex = currentIndex + 1
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                    if (currentIndex > 0) {
+                                        currentIndex = currentIndex - 1
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (root.isTvActivateButton(event)) {
+                                    if (currentIndex >= 0) {
+                                        switchStreamQuality((currentStream.availableQualities || [])[currentIndex] || "")
+                                        playerQualityModal.close()
+                                        playerQualityButton.forceActiveFocus()
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
                                 if (event.key !== root.hkBack)
                                     return
                                 playerQualityModal.close()
@@ -2450,7 +2764,10 @@ ApplicationWindow {
                         border.width: 2
                         border.color: "#6fa8df"
                     }
-                    onOpened: playerSubtitleList.currentIndex = selectedSubtitleIndex
+                    onOpened: {
+                        playerSubtitleList.currentIndex = selectedSubtitleIndex
+                        playerSubtitleList.forceActiveFocus()
+                    }
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -2469,30 +2786,14 @@ ApplicationWindow {
                             model: subtitleOptions()
                             clip: true
                             spacing: 8
-                            keyNavigationEnabled: true
                             delegate: TvButton {
+                                tvPassNavigationKeys: true
                                 width: ListView.view.width
                                 text: modelData.title || "Субтитры"
                                 checkable: true
-                                checked: index === selectedSubtitleIndex
+                                checked: index === playerSubtitleList.currentIndex
                                 onClicked: {
                                     selectSubtitle(index)
-                                    playerSubtitleModal.close()
-                                    subtitleSelectButton.forceActiveFocus()
-                                    showPlayerControls()
-                                }
-                            }
-                            Keys.onReturnPressed: {
-                                if (currentIndex >= 0) {
-                                    selectSubtitle(currentIndex)
-                                    playerSubtitleModal.close()
-                                    subtitleSelectButton.forceActiveFocus()
-                                    showPlayerControls()
-                                }
-                            }
-                            Keys.onEnterPressed: {
-                                if (currentIndex >= 0) {
-                                    selectSubtitle(currentIndex)
                                     playerSubtitleModal.close()
                                     subtitleSelectButton.forceActiveFocus()
                                     showPlayerControls()
@@ -2501,7 +2802,31 @@ ApplicationWindow {
                             Keys.onPressed: function (event) {
                                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                                     return
-                                if (event.key !== root.hkBack)
+                                if (event.key === root.hkDown || event.key === Qt.Key_Down) {
+                                    if (currentIndex < count - 1) {
+                                        currentIndex = currentIndex + 1
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key === root.hkUp || event.key === Qt.Key_Up) {
+                                    if (currentIndex > 0) {
+                                        currentIndex = currentIndex - 1
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (root.isTvActivateButton(event)) {
+                                    if (currentIndex >= 0) {
+                                        selectSubtitle(currentIndex)
+                                        playerSubtitleModal.close()
+                                        subtitleSelectButton.forceActiveFocus()
+                                        showPlayerControls()
+                                    }
+                                    event.accepted = true
+                                    return
+                                }
+                                if (event.key !== root.hkBack && event.key !== Qt.Key_Escape)
                                     return
                                 playerSubtitleModal.close()
                                 subtitleSelectButton.forceActiveFocus()
@@ -2544,19 +2869,78 @@ ApplicationWindow {
                 return false
             }
 
+            function playerControlsMenuHasFocus() {
+                return playerControlsVisible && _focusInsideItem(root.activeFocusItem, playerControls)
+            }
+
+            function playerMenuVolumeStep(up) {
+                showPlayerControls()
+                if (playerStreamAudio) {
+                    var step = 0.06
+                    playerStreamAudio.volume = Math.max(0, Math.min(1, playerStreamAudio.volume + (up ? step : -step)))
+                }
+                if (Qt.platform.os === "linux") {
+                    if (up)
+                        backend.cecVolumeUp()
+                    else
+                        backend.cecVolumeDown()
+                }
+            }
+
+            function playerStreamMenuMoveHorizontal(goRight) {
+                var cur = root.activeFocusItem
+                if (!_focusInsideItem(cur, playerControls))
+                    return false
+                var next = null
+                if (goRight) {
+                    if (cur === playButton)
+                        next = previousEpisodeButton.visible ? previousEpisodeButton : playerQualityButton
+                    else if (cur === previousEpisodeButton)
+                        next = nextEpisodeButton.visible ? nextEpisodeButton : playerQualityButton
+                    else if (cur === nextEpisodeButton)
+                        next = playerQualityButton
+                    else if (cur === playerQualityButton)
+                        next = subtitleSelectButton
+                    else if (cur === subtitleSelectButton)
+                        next = subtitleSmallerButton
+                    else if (cur === subtitleSmallerButton)
+                        next = subtitleBiggerButton
+                    else if (cur === subtitleBiggerButton)
+                        next = playButton
+                    else
+                        return false
+                } else {
+                    if (cur === playButton)
+                        next = subtitleBiggerButton
+                    else if (cur === previousEpisodeButton)
+                        next = playButton
+                    else if (cur === nextEpisodeButton)
+                        next = previousEpisodeButton.visible ? previousEpisodeButton : playButton
+                    else if (cur === playerQualityButton)
+                        next = nextEpisodeButton.visible ? nextEpisodeButton : (previousEpisodeButton.visible ? previousEpisodeButton : playButton)
+                    else if (cur === subtitleSelectButton)
+                        next = playerQualityButton
+                    else if (cur === subtitleSmallerButton)
+                        next = subtitleSelectButton
+                    else if (cur === subtitleBiggerButton)
+                        next = subtitleSmallerButton
+                    else
+                        return false
+                }
+                if (!next)
+                    return false
+                showPlayerControls()
+                next.forceActiveFocus()
+                return true
+            }
+
             // Linux KEY_OK (352): в Qt часто приходит как Key_Yes; обычная Button на него не реагирует — вызываем click().
             function _isLinuxTvOk(event) {
                 return event.key === Qt.Key_Yes || event.nativeScanCode === 352
             }
 
             function _isConfirmKey(event) {
-                if (_isLinuxTvOk(event))
-                    return true
-                if (event.key === root.hkConfirm)
-                    return true
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Select)
-                    return true
-                return false
+                return root.isTvActivateButton(event)
             }
 
             function _tryClickFocusedForTvOk(event) {
@@ -2600,23 +2984,42 @@ ApplicationWindow {
                     break
                 }
 
-                if (event.key === root.hkLeft) {
+                var keyLeft = event.key === root.hkLeft || event.key === Qt.Key_Left
+                var keyRight = event.key === root.hkRight || event.key === Qt.Key_Right
+                var keyUp = event.key === root.hkUp || event.key === Qt.Key_Up
+                var keyDown = event.key === root.hkDown || event.key === Qt.Key_Down
+
+                if (playerControlsMenuHasFocus()) {
+                    if (keyLeft || keyRight) {
+                        if (playerStreamMenuMoveHorizontal(keyRight)) {
+                            event.accepted = true
+                            return
+                        }
+                    }
+                    if (keyUp || keyDown) {
+                        playerMenuVolumeStep(keyUp)
+                        event.accepted = true
+                        return
+                    }
+                }
+
+                if (keyLeft) {
                     seekBy(-15000)
                     event.accepted = true
                     return
                 }
-                if (event.key === root.hkRight) {
+                if (keyRight) {
                     seekBy(15000)
                     event.accepted = true
                     return
                 }
-                if (event.key === root.hkUp) {
+                if (keyUp) {
                     showPlayerControls()
                     playButton.forceActiveFocus()
                     event.accepted = true
                     return
                 }
-                if (event.key === root.hkDown) {
+                if (keyDown) {
                     showPlayerControls()
                     event.accepted = true
                     return
@@ -2714,5 +3117,8 @@ ApplicationWindow {
         if (!backend.tvHotkeysConfigured())
             tvHotkeysWizardVisible = true
         backend.restoreSession()
+        Qt.callLater(function () {
+            backend.startCompanionServer()
+        })
     }
 }
