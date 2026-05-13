@@ -34,9 +34,12 @@ jobs:
         include:
           - runs-on: ubuntu-22.04
             arch: x86_64
+            alsa_pkg: libasound2
           # aarch64-колёса PySide6 ≥6.8.1 — manylinux_2_39 (glibc 2.39+); 22.04-arm не подходит.
           - runs-on: ubuntu-24.04-arm
             arch: aarch64
+            # Ubuntu 24.04+: ALSA как libasound2t64 (libasound2 — только виртуальный пакет).
+            alsa_pkg: libasound2t64
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +67,7 @@ jobs:
             libxkbcommon0 libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-shape0 \
             libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 \
-            libfontconfig1 libfreetype6 libnss3 libnspr4 libasound2
+            libfontconfig1 libfreetype6 libnss3 libnspr4 ${{ matrix.alsa_pkg }}
 
       - name: Install Python deps
         run: |
