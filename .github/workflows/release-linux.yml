@@ -28,7 +28,16 @@ permissions:
 
 jobs:
   appimage:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-22.04
+            arch: x86_64
+          # Linux arm64 hosted runner (см. таблицу в документации GitHub-hosted runners)
+          - runs-on: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +48,7 @@ jobs:
         run: |
           echo "event_name=${{ github.event_name }}"
           echo "ref=${{ github.ref }} ref_name=${{ github.ref_name }}"
+          echo "matrix.arch=${{ matrix.arch }} uname_m=$(uname -m)"
           gh --version
 
       - uses: actions/setup-python@v5
@@ -96,10 +106,38 @@ jobs:
           file dist/rezka-native || true
           shopt -s nullglob && file dist/rezka-native-*.AppImage || true
 
-      - name: Create GitHub Release and upload AppImage
-        if: |
-          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_release == 'true')
+      - name: AppImage как артефакт workflow
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezka-native-appimage-${{ matrix.arch }}
+          path: dist/rezka-native-*.AppImage
+          if-no-files-found: error
+
+  publish:
+    needs: appimage
+    if: |
+      always() && !cancelled() &&
+      needs.appimage.result == 'success' &&
+      (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_release == 'true')
+      )
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.git_ref || github.ref }}
+
+      - name: Скачать оба AppImage
+        uses: actions/download-artifact@v4
+        with:
+          path: _appimages
+          pattern: rezka-native-appimage-*
+          merge-multiple: true
+
+      - name: Create GitHub Release and upload AppImages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -113,9 +151,13 @@ jobs:
           TAG="${TAG#refs/tags/}"
           TAG="${TAG#refs/heads/}"
           shopt -s nullglob
-          assets=( dist/rezka-native-*.AppImage )
+          assets=( _appimages/dist/rezka-native-*.AppImage )
           if [ ${#assets[@]} -eq 0 ]; then
-            echo "ERROR: нет dist/rezka-native-*.AppImage"
+            assets=( _appimages/rezka-native-*.AppImage )
+          fi
+          if [ ${#assets[@]} -lt 2 ]; then
+            echo "ERROR: ожидались оба AppImage (x86_64 и aarch64), найдено: ${#assets[@]}"
+            find _appimages -type f -ls 2>/dev/null || true
             exit 1
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -126,18 +168,17 @@ jobs:
             gh release create "$TAG" "${assets[@]}" --verify-tag --generate-notes --title "$TAG"
           fi
 
-      - name: AppImage как артефакт (при пуше тега)
+      - name: Собрать оба файла в dist/ (артефакт Actions)
+        if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p dist
+          find _appimages -name 'rezka-native-*.AppImage' -exec cp -f {} dist/ \;
+          ls -la dist/
+
+      - name: Артефакты релиза (копия для Actions)
         if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
-          name: rezka-native-${{ github.ref_name }}
-          path: dist/rezka-native-*.AppImage
-          if-no-files-found: error
-
-      - name: Upload artifact (manual run)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: rezka-native-appimage
+          name: rezka-native-${{ github.ref_name }}-all-arch
           path: dist/rezka-native-*.AppImage
           if-no-files-found: error

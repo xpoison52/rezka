@@ -11,6 +11,26 @@ if [[ ! -f "$BIN" || ! -x "$BIN" ]]; then
   exit 1
 fi
 
+MACHINE="$(uname -m)"
+case "$MACHINE" in
+  x86_64)
+    LINUXDEPLOY_ARCH=x86_64
+    REZKA_ARCH_LABEL=x86_64
+    ;;
+  aarch64)
+    LINUXDEPLOY_ARCH=aarch64
+    REZKA_ARCH_LABEL=aarch64
+    ;;
+  armv7l)
+    LINUXDEPLOY_ARCH=armhf
+    REZKA_ARCH_LABEL=armhf
+    ;;
+  *)
+    echo "Неподдерживаемая архитектура: $MACHINE (нужны x86_64, aarch64 или armv7l)"
+    exit 1
+    ;;
+esac
+
 DESKTOP="$ROOT/packaging/linux/rezka-native.desktop"
 ICON_SVG="$ROOT/packaging/linux/icons/rezka-native.svg"
 WORKDIR="$(mktemp -d)"
@@ -24,15 +44,16 @@ else
   exit 1
 fi
 
-LINUXDEPLOY="$WORKDIR/linuxdeploy-x86_64.AppImage"
-wget -q -O "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+LINUXDEPLOY="$WORKDIR/linuxdeploy-${LINUXDEPLOY_ARCH}.AppImage"
+wget -q -O "$LINUXDEPLOY" \
+  "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${LINUXDEPLOY_ARCH}.AppImage"
 chmod +x "$LINUXDEPLOY"
 
 APPDIR="$WORKDIR/AppDir"
 mkdir -p "$APPDIR" "$ROOT/dist"
 VERSION="${REZKA_VERSION:-0.0.0}"
 export VERSION
-OUT="$ROOT/dist/rezka-native-${VERSION}-x86_64.AppImage"
+OUT="$ROOT/dist/rezka-native-${VERSION}-${REZKA_ARCH_LABEL}.AppImage"
 
 # linuxdeploy требует --appdir; сборку ведём из WORKDIR (там же появится *.AppImage)
 cd "$WORKDIR"
