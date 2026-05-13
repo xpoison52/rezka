@@ -34,8 +34,8 @@ jobs:
         include:
           - runs-on: ubuntu-22.04
             arch: x86_64
-          # Linux arm64 hosted runner (см. таблицу в документации GitHub-hosted runners)
-          - runs-on: ubuntu-22.04-arm
+          # aarch64-колёса PySide6 ≥6.8.1 — manylinux_2_39 (glibc 2.39+); 22.04-arm не подходит.
+          - runs-on: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runs-on }}
     steps:
