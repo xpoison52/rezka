@@ -502,12 +502,12 @@ ApplicationWindow {
     function isTvActivateButton(event) {
         if (!event)
             return false
-        // ОК в TV-режиме — только Пробел (и аппаратный KEY_OK на пультах). Enter/Return/Select с геймпада не считаем подтверждением.
+        // ОК: назначаемая клавиша (hkConfirm) + аппаратный KEY_OK на пультах (часто Qt.Key_Yes / scancode 352).
         if (event.key === root.hkBack || event.key === Qt.Key_Escape)
             return false
         if (isLinuxTvOkEvent(event))
             return true
-        return event.key === Qt.Key_Space
+        return event.key === root.hkConfirm
     }
 
     function applyTvHotkeysFromJsonText(jsonText) {
@@ -528,7 +528,7 @@ ApplicationWindow {
             hkUp = o.up !== undefined ? o.up : Qt.Key_Up
             hkDown = o.down !== undefined ? o.down : Qt.Key_Down
             hkBack = o.back !== undefined ? o.back : Qt.Key_Escape
-            hkConfirm = Qt.Key_Space
+            hkConfirm = o.confirm !== undefined ? o.confirm : Qt.Key_Space
         } catch (e) {
         }
     }
@@ -615,11 +615,18 @@ ApplicationWindow {
     }
 
     function tvWizardKeyNames() {
-        return ["left", "right", "up", "down", "back"]
+        return ["left", "right", "up", "down", "back", "confirm"]
     }
 
     function tvWizardStepTitleRu() {
-        var titles = ["Стрелка влево", "Стрелка вправо", "Стрелка вверх", "Стрелка вниз", "Назад"]
+        var titles = [
+            "Стрелка влево",
+            "Стрелка вправо",
+            "Стрелка вверх",
+            "Стрелка вниз",
+            "Назад",
+            "ОК (выбор в списках, Play на плеере)"
+        ]
         return titles[tvWizardStepIndex] || ""
     }
 
@@ -630,8 +637,9 @@ ApplicationWindow {
         var names = tvWizardKeyNames()
         if (tvWizardStepIndex < 0 || tvWizardStepIndex >= names.length)
             return false
-        if (k === Qt.Key_Space) {
-            tvHotkeysWizardError = "Пробел только для ОК в списках — выберите другую клавишу."
+        // Пробел зарезервирован для шага «ОК»; на шагах навигации не принимаем.
+        if (k === Qt.Key_Space && tvWizardStepIndex < names.length - 1) {
+            tvHotkeysWizardError = "Пробел назначается на последнем шаге (ОК). Сейчас выберите другую клавишу."
             event.accepted = true
             return true
         }
@@ -644,9 +652,8 @@ ApplicationWindow {
         if (tvWizardStepIndex < names.length - 1) {
             tvWizardStepIndex++
         } else {
-            copy.confirm = Qt.Key_Space
             if (!backend.saveTvHotkeysJson(JSON.stringify(copy))) {
-                tvHotkeysWizardError = "Все пять клавиш навигации должны быть разными. Начните сначала."
+                tvHotkeysWizardError = "Все шесть клавиш должны быть разными. Начните сначала."
                 tvWizardStepIndex = 0
                 tvWizardPending = ({})
             } else {
@@ -1278,14 +1285,6 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignTop
                     Layout.topMargin: 6
 
-                    Text {
-                        text: "Пульт — только вход"
-                        color: "#c8dcff"
-                        font.pixelSize: 16
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
-                    }
                     Image {
                         width: 160
                         height: 160
@@ -1294,16 +1293,6 @@ ApplicationWindow {
                         asynchronous: false
                         cache: false
                         Layout.alignment: Qt.AlignHCenter
-                    }
-                    Text {
-                        text: root.companionLoginPageUrl.length ? root.companionLoginPageUrl : "…"
-                        color: "#888888"
-                        font.pixelSize: 11
-                        font.family: "monospace"
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: 8
                     }
                 }
             }
@@ -3118,7 +3107,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "Шаг " + (tvWizardStepIndex + 1) + " из 5 — нажмите клавишу:\n«" + tvWizardStepTitleRu() + "»\n(ОК в списках всегда Пробел)"
+                    text: "Шаг " + (tvWizardStepIndex + 1) + " из " + tvWizardKeyNames().length + " — нажмите клавишу:\n«" + tvWizardStepTitleRu() + "»"
                     color: "#dddddd"
                     font.pixelSize: 22
                     width: parent.width

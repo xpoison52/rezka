@@ -59,7 +59,6 @@ def _action_to_qt_with_tv_file(data_root: Path, log: Callable[[str], None]) -> d
             continue
         if iv > 0:
             merged[str(act)] = iv
-    merged["confirm"] = int(Qt.Key.Key_Space)
     log(f"huyauncher: Qt-коды из {p} (для js-моста)")
     return merged
 

@@ -138,6 +138,9 @@ def _default_tv_hotkeys_ints() -> dict[str, int]:
 def _parse_tv_hotkeys_obj(raw: object) -> dict[str, int] | None:
     if not isinstance(raw, dict):
         return None
+    raw = dict(raw)
+    if "confirm" not in raw:
+        raw["confirm"] = int(Qt.Key.Key_Space)
     out: dict[str, int] = {}
     for k in _TV_HOTKEY_FIELDS:
         v = raw.get(k)
@@ -149,9 +152,6 @@ def _parse_tv_hotkeys_obj(raw: object) -> dict[str, int] | None:
         if v <= 0:
             return None
         out[str(k)] = int(v)
-    out["confirm"] = int(Qt.Key.Key_Space)
-    if out["back"] == out["confirm"]:
-        out["back"] = int(Qt.Key.Key_Escape)
     if len(set(out.values())) != len(out):
         return None
     return out
