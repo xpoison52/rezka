@@ -31,7 +31,7 @@ def _init_qt_keys() -> None:
         "left": int(Qt.Key.Key_Left),
         "up": int(Qt.Key.Key_Up),
         "down": int(Qt.Key.Key_Down),
-        "confirm": int(Qt.Key.Key_Return),
+        "confirm": int(Qt.Key.Key_Space),
         "back": int(Qt.Key.Key_Escape),
     }
 
@@ -59,6 +59,7 @@ def _action_to_qt_with_tv_file(data_root: Path, log: Callable[[str], None]) -> d
             continue
         if iv > 0:
             merged[str(act)] = iv
+    merged["confirm"] = int(Qt.Key.Key_Space)
     log(f"huyauncher: Qt-коды из {p} (для js-моста)")
     return merged
 

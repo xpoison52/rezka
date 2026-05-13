@@ -502,19 +502,12 @@ ApplicationWindow {
     function isTvActivateButton(event) {
         if (!event)
             return false
-        // B на геймпаде часто приходит как Key_Return; если «назад» привязан к тому же коду,
-        // не считать это ОК (иначе в сетке сначала срабатывает открытие, а не hkBack).
+        // ОК в TV-режиме — только Пробел (и аппаратный KEY_OK на пультах). Enter/Return/Select с геймпада не считаем подтверждением.
         if (event.key === root.hkBack || event.key === Qt.Key_Escape)
             return false
         if (isLinuxTvOkEvent(event))
             return true
-        if (event.key === hkConfirm)
-            return true
-        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-            return true
-        if (event.key === Qt.Key_Select)
-            return true
-        return false
+        return event.key === Qt.Key_Space
     }
 
     function applyTvHotkeysFromJsonText(jsonText) {
@@ -535,13 +528,26 @@ ApplicationWindow {
             hkUp = o.up !== undefined ? o.up : Qt.Key_Up
             hkDown = o.down !== undefined ? o.down : Qt.Key_Down
             hkBack = o.back !== undefined ? o.back : Qt.Key_Escape
-            hkConfirm = o.confirm !== undefined ? o.confirm : Qt.Key_Space
+            hkConfirm = Qt.Key_Space
         } catch (e) {
         }
     }
 
     function reloadTvHotkeysFromBackend() {
         applyTvHotkeysFromJsonText(backend.readTvHotkeysJson())
+    }
+
+    function tvLoginPageBack() {
+        backend.quit()
+    }
+
+    function tvContinueToolbarBackFromSearch() {
+        if (!loggedIn) {
+            stack.currentIndex = 0
+            email.forceActiveFocus()
+        } else {
+            continueTabButton.forceActiveFocus()
+        }
     }
 
     function loginFormNavigateHorizontal(goRight) {
@@ -609,11 +615,11 @@ ApplicationWindow {
     }
 
     function tvWizardKeyNames() {
-        return ["left", "right", "up", "down", "back", "confirm"]
+        return ["left", "right", "up", "down", "back"]
     }
 
     function tvWizardStepTitleRu() {
-        var titles = ["Стрелка влево", "Стрелка вправо", "Стрелка вверх", "Стрелка вниз", "Назад (как Esc)", "ОК / Пауза (как Пробел)"]
+        var titles = ["Стрелка влево", "Стрелка вправо", "Стрелка вверх", "Стрелка вниз", "Назад"]
         return titles[tvWizardStepIndex] || ""
     }
 
@@ -624,6 +630,11 @@ ApplicationWindow {
         var names = tvWizardKeyNames()
         if (tvWizardStepIndex < 0 || tvWizardStepIndex >= names.length)
             return false
+        if (k === Qt.Key_Space) {
+            tvHotkeysWizardError = "Пробел только для ОК в списках — выберите другую клавишу."
+            event.accepted = true
+            return true
+        }
         var n = names[tvWizardStepIndex]
         var copy = Object.assign({}, tvWizardPending)
         copy[n] = k
@@ -633,8 +644,9 @@ ApplicationWindow {
         if (tvWizardStepIndex < names.length - 1) {
             tvWizardStepIndex++
         } else {
-            if (!backend.saveTvHotkeysJson(JSON.stringify(tvWizardPending))) {
-                tvHotkeysWizardError = "Все шесть клавиш должны быть разными. Начните сначала."
+            copy.confirm = Qt.Key_Space
+            if (!backend.saveTvHotkeysJson(JSON.stringify(copy))) {
+                tvHotkeysWizardError = "Все пять клавиш навигации должны быть разными. Начните сначала."
                 tvWizardStepIndex = 0
                 tvWizardPending = ({})
             } else {
@@ -1115,6 +1127,13 @@ ApplicationWindow {
                         focus: true
                         KeyNavigation.down: password
                         KeyNavigation.up: updateCheckLoginButton
+                        Keys.priority: Keys.BeforeItem
+                        Keys.onPressed: function (event) {
+                            if (event.key === root.hkBack) {
+                                event.accepted = true
+                                root.tvLoginPageBack()
+                            }
+                        }
                         Keys.onDownPressed: function (event) {
                             password.forceActiveFocus()
                             event.accepted = true
@@ -1147,6 +1166,13 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         KeyNavigation.up: email
                         KeyNavigation.down: loginButton
+                        Keys.priority: Keys.BeforeItem
+                        Keys.onPressed: function (event) {
+                            if (event.key === root.hkBack) {
+                                event.accepted = true
+                                root.tvLoginPageBack()
+                            }
+                        }
                         Keys.onDownPressed: function (event) {
                             loginButton.forceActiveFocus()
                             event.accepted = true
@@ -1347,6 +1373,13 @@ ApplicationWindow {
                         Layout.preferredWidth: Math.min(260, Math.max(180, continuePage.width * 0.22))
                         placeholderText: "Поиск"
                         font.pixelSize: 18
+                        Keys.priority: Keys.BeforeItem
+                        Keys.onPressed: function (event) {
+                            if (event.key === root.hkBack) {
+                                event.accepted = true
+                                root.tvContinueToolbarBackFromSearch()
+                            }
+                        }
                         background: Rectangle {
                             radius: 8
                             color: "#202020"
@@ -1518,6 +1551,16 @@ ApplicationWindow {
                     Keys.onPressed: function (event) {
                         if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
                             return
+                        if (event.key === root.hkBack) {
+                            if (!loggedIn) {
+                                stack.currentIndex = 0
+                                email.forceActiveFocus()
+                            } else {
+                                event.accepted = true
+                                continueTabButton.forceActiveFocus()
+                            }
+                            return
+                        }
                         if (root.isTvActivateButton(event)) {
                             if (currentIndex >= 0 && historyItems[currentIndex]) {
                                 openListItem(historyItems[currentIndex])
@@ -1541,15 +1584,6 @@ ApplicationWindow {
                                 event.accepted = true
                             }
                             return
-                        }
-                        if (event.key === root.hkBack) {
-                            if (!loggedIn) {
-                                stack.currentIndex = 0
-                                email.forceActiveFocus()
-                            } else {
-                                event.accepted = true
-                                continueTabButton.forceActiveFocus()
-                            }
                         }
                     }
                 }
@@ -3084,7 +3118,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "Шаг " + (tvWizardStepIndex + 1) + " из 6 — нажмите клавишу:\n«" + tvWizardStepTitleRu() + "»"
+                    text: "Шаг " + (tvWizardStepIndex + 1) + " из 5 — нажмите клавишу:\n«" + tvWizardStepTitleRu() + "»\n(ОК в списках всегда Пробел)"
                     color: "#dddddd"
                     font.pixelSize: 22
                     width: parent.width
