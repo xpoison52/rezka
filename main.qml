@@ -47,7 +47,6 @@ ApplicationWindow {
     property int modalEpisodeIndex: 0
     property bool watchSetupFlow: false
     property var qualityOptions: ["Auto", "360p", "480p", "720p", "1080p", "1080p Ultra"]
-    property var appUpdate: ({ status: "idle", message: "", commitsBehind: 0, localShort: "", remoteShort: "", channel: "github" })
     property string companionLoginPageUrl: ""
     property string companionSearchPageUrl: ""
     property string companionLoginQr: ""
@@ -552,7 +551,7 @@ ApplicationWindow {
 
     function loginFormNavigateHorizontal(goRight) {
         var cur = root.activeFocusItem
-        if (cur !== email && cur !== password && cur !== loginButton && cur !== updateCheckLoginButton)
+        if (cur !== email && cur !== password && cur !== loginButton)
             return false
         if (goRight) {
             if (cur === email)
@@ -560,8 +559,6 @@ ApplicationWindow {
             else if (cur === password)
                 loginButton.forceActiveFocus()
             else if (cur === loginButton)
-                updateCheckLoginButton.forceActiveFocus()
-            else if (cur === updateCheckLoginButton)
                 email.forceActiveFocus()
             else
                 return false
@@ -571,8 +568,6 @@ ApplicationWindow {
             else if (cur === password)
                 email.forceActiveFocus()
             else if (cur === loginButton)
-                password.forceActiveFocus()
-            else if (cur === updateCheckLoginButton)
                 password.forceActiveFocus()
             else
                 return false
@@ -582,7 +577,7 @@ ApplicationWindow {
 
     function continueToolbarNavigateHorizontal(goRight) {
         var cur = root.activeFocusItem
-        if (cur !== continueTabButton && cur !== searchField && cur !== searchButton && cur !== updateCheckToolbarButton && cur !== quitButton)
+        if (cur !== continueTabButton && cur !== searchField && cur !== searchButton && cur !== quitButton)
             return false
         if (goRight) {
             if (cur === continueTabButton)
@@ -590,8 +585,6 @@ ApplicationWindow {
             else if (cur === searchField)
                 searchButton.forceActiveFocus()
             else if (cur === searchButton)
-                updateCheckToolbarButton.forceActiveFocus()
-            else if (cur === updateCheckToolbarButton)
                 quitButton.forceActiveFocus()
             else if (cur === quitButton)
                 continueTabButton.forceActiveFocus()
@@ -604,10 +597,8 @@ ApplicationWindow {
                 continueTabButton.forceActiveFocus()
             else if (cur === searchButton)
                 searchField.forceActiveFocus()
-            else if (cur === updateCheckToolbarButton)
-                searchButton.forceActiveFocus()
             else if (cur === quitButton)
-                updateCheckToolbarButton.forceActiveFocus()
+                searchButton.forceActiveFocus()
             else
                 return false
         }
@@ -631,6 +622,11 @@ ApplicationWindow {
     }
 
     function tvWizardApplyKey(event) {
+        // Пульт часто шлёт auto-repeat: второй такой же код на следующем шаге → «все клавиши разные».
+        if (event.isAutoRepeat) {
+            event.accepted = true
+            return true
+        }
         var k = event.key
         if (k === Qt.Key_unknown || k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta || k === Qt.Key_AltGr)
             return false
@@ -879,13 +875,6 @@ ApplicationWindow {
                 grid.forceActiveFocus()
         }
 
-        function onAppUpdateChanged(json) {
-            appUpdate = JSON.parse(json)
-            const s = appUpdate.status
-            if (s === "checking" || s === "behind" || s === "current" || s === "error" || s === "pulling" || s === "restarting")
-                appUpdatePopup.open()
-        }
-
         function onTvHotkeysChanged(json) {
             root.reloadTvHotkeysFromBackend()
         }
@@ -904,180 +893,6 @@ ApplicationWindow {
 
         function onCompanionSearchQrChanged(dataUrl) {
             root.companionSearchQr = dataUrl || ""
-        }
-    }
-
-    Popup {
-        id: appUpdatePopup
-        parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        width: Math.min(520, parent.width - 48)
-        padding: 24
-        modal: true
-        focus: true
-        closePolicy: (appUpdate.status === "pulling" || appUpdate.status === "restarting" || appUpdate.status === "checking")
-                       ? Popup.NoAutoClose
-                       : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
-
-        onOpened: updatePopupFocusTimer.start()
-
-        background: Rectangle {
-            color: "#2a2a2a"
-            radius: 12
-            border.width: 1
-            border.color: "#4a4a4a"
-        }
-
-        contentItem: FocusScope {
-            id: updatePopupRoot
-            focus: true
-            width: appUpdatePopup.availableWidth
-            implicitHeight: updatePopupColumn.implicitHeight
-
-            ColumnLayout {
-                id: updatePopupColumn
-                width: parent.width
-                spacing: 16
-
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: "white"
-                    font.pixelSize: 22
-                    font.bold: true
-                    text: {
-                        switch (appUpdate.status) {
-                        case "checking":
-                            return "Проверка обновлений…"
-                        case "behind":
-                            return "Доступно обновление"
-                        case "current":
-                            return "Обновления"
-                        case "error":
-                            return "Ошибка обновления"
-                        case "pulling":
-                            return "Установка"
-                        case "restarting":
-                            return "Перезапуск"
-                        default:
-                            return ""
-                        }
-                    }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: "#cccccc"
-                    font.pixelSize: 17
-                    visible: text.length > 0
-                    text: {
-                        let t = appUpdate.message || ""
-                        if (appUpdate.status === "behind" && appUpdate.localShort && appUpdate.remoteShort) {
-                            if (appUpdate.channel === "git")
-                                t += "\nЛокально: " + appUpdate.localShort + " → сервер: " + appUpdate.remoteShort
-                            else
-                                t += "\nУ вас: " + appUpdate.localShort + " · на GitHub: " + appUpdate.remoteShort
-                        }
-                        return t
-                    }
-                }
-
-                BusyIndicator {
-                    Layout.alignment: Qt.AlignHCenter
-                    visible: appUpdate.status === "checking" || appUpdate.status === "pulling" || appUpdate.status === "restarting"
-                    running: visible
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: appUpdate.status === "behind"
-                    spacing: 12
-
-                    TvButton {
-                        id: updateInstallBtn
-                        text: appUpdate.channel === "git" ? "Установить и перезапустить" : "Открыть загрузку"
-                        font.pixelSize: 18
-                        Layout.fillWidth: true
-                        KeyNavigation.right: updateLaterBtn
-                        onClicked: {
-                            appUpdatePopup.close()
-                            backend.applyAppUpdateAndRestart()
-                        }
-                    }
-
-                    TvButton {
-                        id: updateLaterBtn
-                        text: "Позже"
-                        font.pixelSize: 18
-                        KeyNavigation.left: updateInstallBtn
-                        onClicked: appUpdatePopup.close()
-                    }
-                }
-
-                TvButton {
-                    id: updateOkBtn
-                    Layout.fillWidth: true
-                    visible: appUpdate.status === "current" || appUpdate.status === "error"
-                    text: "OK"
-                    font.pixelSize: 18
-                    onClicked: appUpdatePopup.close()
-                }
-            }
-
-            Keys.onPressed: function (event) {
-                if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
-                    return
-                var k = event.key
-                var left = k === root.hkLeft || k === Qt.Key_Left
-                var right = k === root.hkRight || k === Qt.Key_Right
-                var up = k === root.hkUp || k === Qt.Key_Up
-                var down = k === root.hkDown || k === Qt.Key_Down
-                if (appUpdate.status === "behind" && (left || right || up || down)) {
-                    var fi0 = root.activeFocusItem
-                    if (fi0 === updateInstallBtn || fi0 === updateLaterBtn) {
-                        if (fi0 === updateInstallBtn)
-                            updateLaterBtn.forceActiveFocus()
-                        else
-                            updateInstallBtn.forceActiveFocus()
-                        event.accepted = true
-                        return
-                    }
-                }
-                if (k === root.hkBack || k === Qt.Key_Escape) {
-                    if (!(appUpdate.status === "pulling" || appUpdate.status === "restarting" || appUpdate.status === "checking")) {
-                        event.accepted = true
-                        appUpdatePopup.close()
-                    }
-                    return
-                }
-                if (root.isTvActivateButton(event)) {
-                    var fi = root.activeFocusItem
-                    if (fi && typeof fi.click === "function") {
-                        event.accepted = true
-                        fi.click()
-                    }
-                    return
-                }
-                if ((up || down) && (appUpdate.status === "current" || appUpdate.status === "error") && updateOkBtn.visible) {
-                    updateOkBtn.forceActiveFocus()
-                    event.accepted = true
-                }
-            }
-        }
-    }
-
-    Timer {
-        id: updatePopupFocusTimer
-        interval: 0
-        repeat: false
-        onTriggered: {
-            updatePopupRoot.forceActiveFocus()
-            if (appUpdate.status === "behind")
-                updateInstallBtn.forceActiveFocus()
-            else if (appUpdate.status === "current" || appUpdate.status === "error")
-                updateOkBtn.forceActiveFocus()
         }
     }
 
@@ -1107,7 +922,7 @@ ApplicationWindow {
 
         Item {
             id: loginPage
-            focus: true
+            focus: stack.currentIndex === 0 && !root.tvHotkeysWizardVisible
 
             RowLayout {
                 anchors.centerIn: parent
@@ -1131,9 +946,9 @@ ApplicationWindow {
                         placeholderText: "Email"
                         font.pixelSize: 24
                         Layout.fillWidth: true
-                        focus: true
+                        focus: stack.currentIndex === 0 && !root.tvHotkeysWizardVisible
                         KeyNavigation.down: password
-                        KeyNavigation.up: updateCheckLoginButton
+                        KeyNavigation.up: loginButton
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: function (event) {
                             if (event.key === root.hkBack) {
@@ -1146,7 +961,7 @@ ApplicationWindow {
                             event.accepted = true
                         }
                         Keys.onUpPressed: function (event) {
-                            updateCheckLoginButton.forceActiveFocus()
+                            loginButton.forceActiveFocus()
                             event.accepted = true
                         }
                         Keys.onRightPressed: function (event) {
@@ -1210,13 +1025,13 @@ ApplicationWindow {
                         font.pixelSize: 24
                         Layout.fillWidth: true
                         KeyNavigation.up: password
-                        KeyNavigation.down: updateCheckLoginButton
+                        KeyNavigation.down: email
                         Keys.onUpPressed: function (event) {
                             password.forceActiveFocus()
                             event.accepted = true
                         }
                         Keys.onDownPressed: function (event) {
-                            updateCheckLoginButton.forceActiveFocus()
+                            email.forceActiveFocus()
                             event.accepted = true
                         }
                         Keys.onRightPressed: function (event) {
@@ -1232,32 +1047,6 @@ ApplicationWindow {
                             errorText.text = ""
                             backend.login(email.text, password.text)
                         }
-                    }
-
-                    TvButton {
-                        id: updateCheckLoginButton
-                        text: "Проверить обновления"
-                        font.pixelSize: 20
-                        Layout.fillWidth: true
-                        KeyNavigation.up: loginButton
-                        KeyNavigation.down: email
-                        Keys.onUpPressed: function (event) {
-                            loginButton.forceActiveFocus()
-                            event.accepted = true
-                        }
-                        Keys.onDownPressed: function (event) {
-                            email.forceActiveFocus()
-                            event.accepted = true
-                        }
-                        Keys.onRightPressed: function (event) {
-                            email.forceActiveFocus()
-                            event.accepted = true
-                        }
-                        Keys.onLeftPressed: function (event) {
-                            password.forceActiveFocus()
-                            event.accepted = true
-                        }
-                        onClicked: backend.checkForAppUpdate()
                     }
 
                     Text {
@@ -1313,7 +1102,7 @@ ApplicationWindow {
 
         Item {
             id: continuePage
-            focus: true
+            focus: stack.currentIndex === 1 && !root.tvHotkeysWizardVisible
 
             Keys.onPressed: function (event) {
                 if (root.tvHotkeysWizardVisible && root.tvWizardApplyKey(event))
@@ -1410,16 +1199,6 @@ ApplicationWindow {
                             grid.forceActiveFocus()
                         }
                         KeyNavigation.left: searchField
-                        KeyNavigation.right: updateCheckToolbarButton
-                        KeyNavigation.down: grid
-                    }
-
-                    TvButton {
-                        id: updateCheckToolbarButton
-                        text: "Обновления"
-                        font.pixelSize: 20
-                        onClicked: backend.checkForAppUpdate()
-                        KeyNavigation.left: searchButton
                         KeyNavigation.right: quitButton
                         KeyNavigation.down: grid
                     }
@@ -1429,7 +1208,7 @@ ApplicationWindow {
                         text: "Выход"
                         font.pixelSize: 20
                         onClicked: backend.quit()
-                        KeyNavigation.left: updateCheckToolbarButton
+                        KeyNavigation.left: searchButton
                         KeyNavigation.down: grid
                     }
                 }

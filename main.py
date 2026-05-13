@@ -15,7 +15,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from typing import Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
 
@@ -99,7 +98,7 @@ from bs4 import BeautifulSoup
 launch_log("importing PySide6 (Qt)...")
 try:
     from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
-    from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QKeySequence, QShortcut
+    from PySide6.QtGui import QCursor, QGuiApplication, QKeySequence, QShortcut
     from PySide6.QtMultimedia import QMediaDevices, QPlaybackOptions
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow
@@ -152,7 +151,9 @@ def _parse_tv_hotkeys_obj(raw: object) -> dict[str, int] | None:
         if v <= 0:
             return None
         out[str(k)] = int(v)
-    if len(set(out.values())) != len(out):
+    vals = list(out.values())
+    if len(set(vals)) != len(vals):
+        launch_log(f"tv-hotkeys: повторяются коды клавиш (Qt.Key): {out}")
         return None
     return out
 
@@ -812,82 +813,6 @@ def parse_people_and_ratings(soup):
     return result
 
 
-def _git_run(*args, cwd=None, timeout=180):
-    try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=cwd or APP_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError:
-        return subprocess.CompletedProcess(
-            ["git", *args], 127, "", "git: команда не найдена"
-        )
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(["git", *args], 124, "", "git: таймаут")
-
-
-def _git_short_rev(rev, cwd=None):
-    r = _git_run("rev-parse", "--short", rev, cwd=cwd, timeout=30)
-    if r.returncode != 0:
-        return ""
-    return (r.stdout or "").strip()
-
-
-def _github_repo_for_updates() -> Optional[str]:
-    raw = os.environ.get("REZKA_GITHUB_REPO")
-    if raw is not None:
-        r = raw.strip()
-        if not r:
-            return None
-        return r
-    return "xpoison52/rezka"
-
-
-def _normalize_version_label(value: str) -> str:
-    s = (value or "").strip().lstrip("vV")
-    if not s:
-        return "0.0.0"
-    s = s.split("-")[0].split("+")[0].strip()
-    return s or "0.0.0"
-
-
-def _version_tuple(value: str) -> tuple:
-    base = _normalize_version_label(value)
-    parts: list[int] = []
-    for seg in base.split("."):
-        m = re.match(r"^(\d+)", seg.strip())
-        parts.append(int(m.group(1)) if m else 0)
-    if not parts:
-        parts = [0]
-    return tuple(parts)
-
-
-def _local_app_version() -> str:
-    env = (os.environ.get("REZKA_APP_VERSION") or "").strip()
-    if env:
-        return env
-    vf = APP_ROOT / "app-version.txt"
-    if vf.exists():
-        try:
-            line = vf.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-            if line and line[0].strip():
-                return line[0].strip()
-        except OSError:
-            pass
-    if (APP_ROOT / ".git").is_dir():
-        r = _git_run("describe", "--tags", "--abbrev=0", timeout=30)
-        if r.returncode == 0 and (r.stdout or "").strip():
-            return (r.stdout or "").strip()
-    return "0.0.0"
-
-
-def _emit_app_update(backend, payload):
-    backend.appUpdateChanged.emit(json.dumps(payload, ensure_ascii=False))
-
-
 class Backend(QObject):
     loginChanged = Signal(bool)
     historyChanged = Signal(str)
@@ -897,10 +822,7 @@ class Backend(QObject):
     subtitlesChanged = Signal(str)
     errorChanged = Signal(str)
     loadingChanged = Signal(str)
-    appUpdateChanged = Signal(str)
     tvHotkeysChanged = Signal(str)
-    restartRequested = Signal()
-    openReleaseUrl = Signal(str)
     companionServerUrlChanged = Signal(str)
     companionLoginUrlChanged = Signal(str)
     companionSearchUrlChanged = Signal(str)
@@ -918,10 +840,6 @@ class Backend(QObject):
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.details_request_id = 0
         self.stream_request_id = 0
-        self._update_remote = (os.environ.get("REZKA_GIT_REMOTE") or "origin").strip() or "origin"
-        self._update_branch = (os.environ.get("REZKA_GIT_BRANCH") or "").strip()
-        self._update_download_url = ""
-        self._update_release_page_url = ""
         self._companion_server = None
         self._companion_url = ""
         self._companion_token = ""
@@ -929,7 +847,6 @@ class Backend(QObject):
         self._companion_search_url = ""
         self._companion_login_qr = ""
         self._companion_search_qr = ""
-        self.restartRequested.connect(self._restart_process, Qt.ConnectionType.QueuedConnection)
         self._companion_login_requested.connect(self.login, Qt.ConnectionType.QueuedConnection)
         self._companion_search_requested.connect(self.searchCompanion, Qt.ConnectionType.QueuedConnection)
 
@@ -1449,303 +1366,6 @@ class Backend(QObject):
         except Exception as e:
             self.errorChanged.emit(f"Не удалось прочитать history.json: {e}")
 
-    def _git_branch_resolved(self):
-        if self._update_branch:
-            return self._update_branch
-        r = _git_run("rev-parse", "--abbrev-ref", "HEAD")
-        if r.returncode != 0:
-            return ""
-        return (r.stdout or "").strip()
-
-    @Slot()
-    def _restart_process(self):
-        if _is_frozen():
-            argv = [sys.executable, *sys.argv[1:]]
-        else:
-            script = APP_ROOT / "main.py"
-            argv = [sys.executable, str(script), *sys.argv[1:]]
-        launch_log(f"restart: exec {argv}")
-        try:
-            os.execv(sys.executable, argv)
-        except OSError as e:
-            launch_log(f"restart exec failed: {e}\n{traceback.format_exc()}")
-            self.errorChanged.emit(f"Не удалось перезапустить приложение: {e}")
-
-    def _git_check_for_updates(self):
-        if not (APP_ROOT / ".git").is_dir():
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "Нет папки .git — клонируйте репозиторий или уберите REZKA_UPDATES_VIA_GIT.",
-            })
-            return
-
-        st = _git_run("status", "--porcelain")
-        if st.returncode != 0:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"git status не удался: {(st.stderr or st.stdout or '').strip()}",
-            })
-            return
-        if (st.stdout or "").strip():
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "В каталоге проекта есть незакоммиченные изменения. Сохраните или откатите их, затем выполните git pull вручную.",
-            })
-            return
-
-        branch = self._git_branch_resolved()
-        if not branch or branch == "HEAD":
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "Не удалось определить ветку git (detached HEAD?). Задайте REZKA_GIT_BRANCH.",
-            })
-            return
-
-        fetch = _git_run("fetch", self._update_remote, "--prune", timeout=120)
-        if fetch.returncode != 0:
-            err = (fetch.stderr or fetch.stdout or "").strip()
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"git fetch не удался: {err or 'неизвестная ошибка'}",
-            })
-            return
-
-        upstream = f"{self._update_remote}/{branch}"
-        rh = _git_run("rev-parse", upstream)
-        if rh.returncode != 0:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"Нет ветки {upstream} после fetch. Проверьте remote и имя ветки (REZKA_GIT_BRANCH).",
-            })
-            return
-
-        cnt = _git_run("rev-list", "--count", f"HEAD..{upstream}")
-        if cnt.returncode != 0:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"Не сравнить версии: {(cnt.stderr or '').strip()}",
-            })
-            return
-        try:
-            behind = int((cnt.stdout or "0").strip() or 0)
-        except ValueError:
-            behind = 0
-
-        local_s = _git_short_rev("HEAD")
-        remote_s = _git_short_rev(upstream)
-
-        if behind == 0:
-            _emit_app_update(self, {
-                "status": "current",
-                "message": f"У вас последняя версия ({local_s or '—'}).",
-                "localShort": local_s,
-                "remoteShort": remote_s,
-                "commitsBehind": 0,
-                "channel": "git",
-            })
-        else:
-            _emit_app_update(self, {
-                "status": "behind",
-                "message": f"Доступно обновление: {behind} комм.",
-                "localShort": local_s,
-                "remoteShort": remote_s,
-                "commitsBehind": behind,
-                "channel": "git",
-            })
-
-    def _github_check_for_updates(self, repo: str):
-        local_raw = _local_app_version()
-        local_label = _normalize_version_label(local_raw)
-        api = f"https://api.github.com/repos/{repo}/releases/latest"
-        try:
-            r = requests.get(
-                api,
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "rezka-native",
-                },
-                timeout=25,
-            )
-        except requests.RequestException as e:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"Не удалось связаться с GitHub: {e}",
-            })
-            return
-
-        if r.status_code == 404:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "На GitHub нет опубликованных релизов (latest).",
-            })
-            return
-        if r.status_code != 200:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": f"GitHub API: HTTP {r.status_code}",
-            })
-            return
-
-        try:
-            data = r.json()
-        except ValueError:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "Некорректный ответ GitHub API.",
-            })
-            return
-
-        tag = (data.get("tag_name") or "").strip()
-        if not tag:
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "В ответе GitHub нет tag_name.",
-            })
-            return
-
-        remote_label = _normalize_version_label(tag)
-        page_url = (data.get("html_url") or "").strip()
-        download_url = ""
-        for asset in data.get("assets") or []:
-            name = (asset.get("name") or "").lower()
-            if name.endswith(".appimage"):
-                download_url = (asset.get("browser_download_url") or "").strip()
-                break
-
-        if _version_tuple(remote_label) <= _version_tuple(local_label):
-            _emit_app_update(self, {
-                "status": "current",
-                "message": f"Установлена последняя версия ({local_label}).",
-                "localShort": local_label,
-                "remoteShort": remote_label,
-                "commitsBehind": 0,
-                "channel": "github",
-            })
-            return
-
-        self._update_release_page_url = page_url
-        self._update_download_url = download_url
-        extra = ""
-        if download_url:
-            extra = " Нажмите кнопку — откроется загрузка AppImage."
-        elif page_url:
-            extra = " Нажмите кнопку — откроется страница релиза."
-        _emit_app_update(self, {
-            "status": "behind",
-            "message": f"Доступен релиз {remote_label} (у вас {local_label}).{extra}",
-            "localShort": local_label,
-            "remoteShort": remote_label,
-            "commitsBehind": 0,
-            "channel": "github",
-        })
-
-    @Slot()
-    def checkForAppUpdate(self):
-        def work():
-            self._update_download_url = ""
-            self._update_release_page_url = ""
-            _emit_app_update(self, {"status": "checking", "message": ""})
-
-            use_git = (os.environ.get("REZKA_UPDATES_VIA_GIT") or "").strip() == "1"
-            repo = _github_repo_for_updates()
-
-            if use_git:
-                self._git_check_for_updates()
-                return
-
-            if repo:
-                self._github_check_for_updates(repo)
-                return
-
-            if (APP_ROOT / ".git").is_dir():
-                self._git_check_for_updates()
-                return
-
-            _emit_app_update(self, {
-                "status": "error",
-                "message": "Задайте репозиторий: REZKA_GITHUB_REPO=владелец/имя (или клонируйте git и включите REZKA_UPDATES_VIA_GIT=1).",
-            })
-
-        self.run_async(work)
-
-    @Slot()
-    def applyAppUpdateAndRestart(self):
-        def work():
-            dl = self._update_download_url.strip()
-            page = self._update_release_page_url.strip()
-            if dl or page:
-                url = dl or page
-                self._update_download_url = ""
-                self._update_release_page_url = ""
-                self.openReleaseUrl.emit(url)
-                return
-
-            branch = self._git_branch_resolved()
-            if not branch:
-                _emit_app_update(self, {
-                    "status": "error",
-                    "message": "Не удалось определить ветку для обновления.",
-                })
-                return
-
-            _emit_app_update(self, {"status": "pulling", "message": "Скачиваем и обновляем зависимости…"})
-
-            pull = _git_run(
-                "pull", "--ff-only", self._update_remote, branch, timeout=180
-            )
-            if pull.returncode != 0:
-                err = (pull.stderr or pull.stdout or "").strip()
-                _emit_app_update(self, {
-                    "status": "error",
-                    "message": f"git pull не удался (нужен ручной merge?): {err[-800:]}" if err else "git pull не удался.",
-                })
-                return
-
-            pip = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "-q",
-                    "-r",
-                    str(APP_ROOT / "requirements.txt"),
-                ],
-                cwd=APP_ROOT,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            if pip.returncode != 0:
-                tail = (pip.stderr or pip.stdout or "")[-800:]
-                _emit_app_update(self, {
-                    "status": "error",
-                    "message": f"pip install не удался: {tail}" if tail else "pip install не удался.",
-                })
-                return
-
-            chk = subprocess.run(
-                [sys.executable, "-m", "py_compile", str(APP_ROOT / "main.py")],
-                cwd=APP_ROOT,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if chk.returncode != 0:
-                err = (chk.stderr or chk.stdout or "").strip()
-                _emit_app_update(self, {
-                    "status": "error",
-                    "message": "После обновления main.py не проходит проверку — перезапуск отменён, исправьте вручную.\n"
-                    + (err[-600:] if err else ""),
-                })
-                return
-
-            _emit_app_update(self, {"status": "restarting", "message": "Перезапуск…"})
-            self.restartRequested.emit()
-
-        self.run_async(work)
-
     def _emit_companion_urls_and_qr(self) -> None:
         self.companionServerUrlChanged.emit(self._companion_url or "")
         self.companionLoginUrlChanged.emit(self._companion_login_url or "")
@@ -1904,6 +1524,10 @@ class Backend(QObject):
             return False
         parsed = _parse_tv_hotkeys_obj(raw)
         if not parsed:
+            launch_log(
+                "saveTvHotkeysJson: отклонено (не все поля, дубликаты кодов или неверный JSON). "
+                f"payload_keys={list(raw.keys()) if isinstance(raw, dict) else '?'}"
+            )
             return False
         try:
             TV_HOTKEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1996,12 +1620,6 @@ def main() -> int:
 
     launch_log("Backend()")
     backend = Backend()
-
-    def _open_release_url(url: str) -> None:
-        if url:
-            QDesktopServices.openUrl(QUrl(url))
-
-    backend.openReleaseUrl.connect(_open_release_url, Qt.ConnectionType.QueuedConnection)
 
     engine = QQmlApplicationEngine()
     engine.setOutputWarningsToStandardError(True)
