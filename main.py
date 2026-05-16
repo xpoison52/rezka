@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from pathlib import Path
 from socketserver import ThreadingMixIn
+from typing import Any, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
 
@@ -91,6 +92,12 @@ if sys.platform == "linux":
         os.environ["QT_SCALE_FACTOR"] = _scale
     else:
         os.environ.setdefault("QT_SCALE_FACTOR", "1.4")
+    # PulseAudio/PipeWire: без PULSE_SERVER Qt часто не подключается к звуку (AppImage/SSH).
+    _xdg_runtime = (os.environ.get("XDG_RUNTIME_DIR") or "").strip()
+    if _xdg_runtime and not (os.environ.get("PULSE_SERVER") or "").strip():
+        _pulse_native = Path(_xdg_runtime) / "pulse" / "native"
+        if _pulse_native.exists():
+            os.environ.setdefault("PULSE_SERVER", f"unix:{_pulse_native}")
 
 import requests
 from bs4 import BeautifulSoup
@@ -847,6 +854,7 @@ class Backend(QObject):
         self._companion_search_url = ""
         self._companion_login_qr = ""
         self._companion_search_qr = ""
+        self._media_player_ref: Optional[QObject] = None
         self._companion_login_requested.connect(self.login, Qt.ConnectionType.QueuedConnection)
         self._companion_search_requested.connect(self.searchCompanion, Qt.ConnectionType.QueuedConnection)
 
@@ -1549,6 +1557,63 @@ class Backend(QObject):
             pass
         self.tvHotkeysChanged.emit("{}")
 
+    def _pick_audio_output_device(self, devices: list[Any]):
+        preferred = (os.environ.get("REZKA_AUDIO_DEVICE") or "").strip()
+        if preferred:
+            pl = preferred.lower()
+            for dev in devices:
+                if preferred == dev.id() or pl in dev.description().lower():
+                    return dev
+        if sys.platform == "linux" and (os.environ.get("REZKA_AUDIO_HDMI") or "").strip() == "1":
+            for dev in devices:
+                desc = dev.description().lower()
+                if "hdmi" in desc or "vc4hdmi" in desc or "vc4-hdmi" in desc:
+                    return dev
+        return None
+
+    def _apply_media_player_audio(self, media_player) -> None:
+        audio_out = media_player.audioOutput()
+        if not audio_out:
+            launch_log("audio: у MediaPlayer нет audioOutput")
+            return
+
+        try:
+            audio_out.setMuted(False)
+        except Exception:
+            pass
+        try:
+            audio_out.setVolume(1.0)
+        except Exception:
+            pass
+
+        devices = list(QMediaDevices.audioOutputs())
+        debug = os.environ.get("REZKA_AUDIO_DEBUG") == "1"
+        if debug:
+            for dev in devices:
+                launch_log(f"audio output candidate id={dev.id()!r} desc={dev.description()!r}")
+
+        try:
+            default_dev = QMediaDevices.defaultAudioOutput()
+        except Exception:
+            default_dev = None
+
+        chosen = self._pick_audio_output_device(devices)
+        if chosen:
+            try:
+                audio_out.setDevice(chosen)
+                launch_log(f"audio output (явный): {chosen.description()!r} ({chosen.id()!r})")
+            except Exception as e:
+                launch_log(f"audio setDevice failed: {e} — остаётся системный по умолчанию")
+        elif default_dev and default_dev.description():
+            launch_log(
+                f"audio output (системный): {default_dev.description()!r} ({default_dev.id()!r})"
+            )
+        elif not devices:
+            launch_log(
+                "audio: нет устройств вывода — проверьте PulseAudio/PipeWire "
+                "(pipewire-pulse, pulseaudio) и libasound2"
+            )
+
     @Slot(QObject)
     def configureMediaPlayer(self, media_player):
         if not media_player:
@@ -1559,42 +1624,13 @@ class Backend(QObject):
         playback_options.setProbeSize(32 * 1024)
         media_player.setPlaybackOptions(playback_options)
 
-        audio_out = media_player.audioOutput()
-        if not audio_out:
-            return
+        self._media_player_ref = media_player
+        self._apply_media_player_audio(media_player)
 
-        try:
-            audio_out.setVolume(1.0)
-        except Exception:
-            pass
-
-        devices = list(QMediaDevices.audioOutputs())
-        if os.environ.get("REZKA_AUDIO_DEBUG") == "1":
-            for dev in devices:
-                launch_log(f"audio output candidate id={dev.id()!r} desc={dev.description()!r}")
-
-        preferred = (os.environ.get("REZKA_AUDIO_DEVICE") or "").strip()
-
-        def pick_device():
-            if preferred:
-                pl = preferred.lower()
-                for dev in devices:
-                    if preferred == dev.id() or pl in dev.description().lower():
-                        return dev
-            if sys.platform == "linux":
-                for dev in devices:
-                    desc = dev.description().lower()
-                    if "hdmi" in desc or "vc4hdmi" in desc or "vc4-hdmi" in desc:
-                        return dev
-            return None
-
-        chosen = pick_device()
-        if chosen:
-            try:
-                audio_out.setDevice(chosen)
-                launch_log(f"audio output: {chosen.description()!r} ({chosen.id()!r})")
-            except Exception as e:
-                launch_log(f"audio setDevice failed: {e}")
+    @Slot()
+    def reapplyMediaPlayerAudio(self) -> None:
+        if self._media_player_ref:
+            self._apply_media_player_audio(self._media_player_ref)
 
 
 def main() -> int:
@@ -1608,7 +1644,9 @@ def main() -> int:
         f"env DISPLAY={os.environ.get('DISPLAY')!r} "
         f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY')!r} "
         f"QT_QPA_PLATFORM={os.environ.get('QT_QPA_PLATFORM')!r} "
-        f"XDG_SESSION_TYPE={os.environ.get('XDG_SESSION_TYPE')!r}"
+        f"XDG_SESSION_TYPE={os.environ.get('XDG_SESSION_TYPE')!r} "
+        f"PULSE_SERVER={os.environ.get('PULSE_SERVER')!r} "
+        f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR')!r}"
     )
     launch_log(f"python {sys.version.split()[0]} executable={sys.executable}")
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -1620,6 +1658,9 @@ def main() -> int:
 
     launch_log("Backend()")
     backend = Backend()
+
+    _audio_devices = QMediaDevices()
+    _audio_devices.audioOutputsChanged.connect(backend.reapplyMediaPlayerAudio)
 
     engine = QQmlApplicationEngine()
     engine.setOutputWarningsToStandardError(True)

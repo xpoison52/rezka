@@ -2108,6 +2108,8 @@ ApplicationWindow {
                     videoOutput: videoOutput
                     audioOutput: AudioOutput {
                         id: playerStreamAudio
+                        volume: 1.0
+                        muted: false
                     }
                     Component.onCompleted: backend.configureMediaPlayer(mediaPlayer)
 
@@ -2135,10 +2137,12 @@ ApplicationWindow {
                     }
 
                     onPlaybackStateChanged: {
-                        if (playbackState === MediaPlayer.PlayingState)
+                        if (playbackState === MediaPlayer.PlayingState) {
+                            backend.reapplyMediaPlayerAudio()
                             controlsHideTimer.restart()
-                        else
+                        } else {
                             playerControlsVisible = true
+                        }
                     }
 
                 }
